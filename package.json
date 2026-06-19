@@ -1,0 +1,67 @@
+{
+  "name": "@hackettyam/sudoku-cli",
+  "version": "0.1.0",
+  "description": "Command-line interface for Sudoku: generate, solve, validate, and hint puzzles using @hackettyam/sudoku-tools.",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "hackettyam"
+  },
+  "bin": {
+    "sudoku-cli": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.3.0"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:bundle": "node scripts/build.mjs",
+    "build": "pnpm build:types && pnpm build:bundle",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "release": "standard-version",
+    "release:minor": "standard-version --release-as minor",
+    "release:major": "standard-version --release-as major",
+    "release:patch": "standard-version --release-as patch",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "sudoku",
+    "cli",
+    "puzzle",
+    "solver",
+    "generator"
+  ],
+  "dependencies": {
+    "@hackettyam/sudoku-tools": "^1.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@stylistic/eslint-plugin": "^2.12.1",
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.17.0",
+    "standard-version": "^9.5.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^2.1.8"
+  },
+  "packageManager": "pnpm@10.0.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
