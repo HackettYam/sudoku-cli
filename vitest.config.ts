@@ -38,6 +38,7 @@ export default defineConfig({
         'src/**/*.test.ts',
         'src/cli.ts',
         'src/index.ts',
+        '**/proper-lockfile.d.ts',
       ],
       thresholds: {
         // G-T02: 100% line coverage for all exported functions.

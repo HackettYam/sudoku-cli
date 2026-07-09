@@ -152,6 +152,171 @@ describe('parseArgs', () => {
     })
   })
 
+  describe('play', () => {
+    it('returns play_tui with no args', () => {
+      const result = parseArgs(['play'])
+
+      expect(result).toEqual({
+        kind: 'play',
+        playArgs: {
+          kind: 'play_tui',
+          difficulty: undefined,
+          load: undefined,
+          resumeLast: false,
+          help: false,
+        },
+      })
+    })
+
+    it('parses --difficulty', () => {
+      const result = parseArgs(['play', '--difficulty', 'hard'])
+
+      expect(result).toEqual({
+        kind: 'play',
+        playArgs: {
+          kind: 'play_tui',
+          difficulty: 'hard',
+          load: undefined,
+          resumeLast: false,
+          help: false,
+        },
+      })
+    })
+
+    it('parses --load', () => {
+      const result = parseArgs(['play', '--load', 'puzzle-42'])
+
+      expect(result).toEqual({
+        kind: 'play',
+        playArgs: {
+          kind: 'play_tui',
+          difficulty: undefined,
+          load: 'puzzle-42',
+          resumeLast: false,
+          help: false,
+        },
+      })
+    })
+
+    it('parses --resume', () => {
+      const result = parseArgs(['play', '--resume'])
+
+      expect(result).toEqual({
+        kind: 'play',
+        playArgs: {
+          kind: 'play_tui',
+          difficulty: undefined,
+          load: undefined,
+          resumeLast: true,
+          help: false,
+        },
+      })
+    })
+
+    it('parses --stats as play_stats mode', () => {
+      const result = parseArgs(['play', '--stats'])
+
+      expect(result).toEqual({
+        kind: 'play',
+        playArgs: {
+          kind: 'play_stats',
+          difficulty: undefined,
+          load: undefined,
+          resumeLast: false,
+          help: false,
+        },
+      })
+    })
+
+    it('parses --achievements as play_achievements mode', () => {
+      const result = parseArgs(['play', '--achievements'])
+
+      expect(result).toEqual({
+        kind: 'play',
+        playArgs: {
+          kind: 'play_achievements',
+          difficulty: undefined,
+          load: undefined,
+          resumeLast: false,
+          help: false,
+        },
+      })
+    })
+
+    it('parses --leaderboard as play_leaderboard mode', () => {
+      const result = parseArgs(['play', '--leaderboard'])
+
+      expect(result).toEqual({
+        kind: 'play',
+        playArgs: {
+          kind: 'play_leaderboard',
+          difficulty: undefined,
+          load: undefined,
+          resumeLast: false,
+          help: false,
+        },
+      })
+    })
+
+    it('returns help on --help', () => {
+      expect(parseArgs(['play', '--help'])).toEqual({ kind: 'help' })
+    })
+
+    it('returns help on -h', () => {
+      expect(parseArgs(['play', '-h'])).toEqual({ kind: 'help' })
+    })
+
+    it('returns error on unknown option', () => {
+      const result = parseArgs(['play', '--frobnicate'])
+
+      expect(result.kind).toBe('error')
+
+      if (result.kind === 'error') {
+        expect(result.message).toContain('Unknown option')
+      }
+    })
+
+    it('returns error on missing argument value', () => {
+      const result = parseArgs(['play', '--difficulty'])
+
+      expect(result.kind).toBe('error')
+
+      if (result.kind === 'error') {
+        expect(result.message).toContain('argument missing')
+      }
+    })
+
+    it('combines --stats with --difficulty', () => {
+      const result = parseArgs(['play', '--stats', '--difficulty', 'expert'])
+
+      expect(result).toEqual({
+        kind: 'play',
+        playArgs: {
+          kind: 'play_stats',
+          difficulty: 'expert',
+          load: undefined,
+          resumeLast: false,
+          help: false,
+        },
+      })
+    })
+
+    it('prioritizes --stats over --achievements when both given', () => {
+      const result = parseArgs(['play', '--stats', '--achievements'])
+
+      expect(result).toEqual({
+        kind: 'play',
+        playArgs: {
+          kind: 'play_stats',
+          difficulty: undefined,
+          load: undefined,
+          resumeLast: false,
+          help: false,
+        },
+      })
+    })
+  })
+
   it('exposes HELP_TEXT for cli.ts', () => {
     expect(HELP_TEXT).toContain('Usage: sudoku-cli')
   })

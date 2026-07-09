@@ -26,3 +26,12 @@ export {
   type CliDifficultyName,
 } from './format/difficulty.js'
 export { BOARD_LENGTH } from './format/constants.js'
+
+// Play module — interactive TUI game
+export { playCommand } from './commands/play.js'
+export type { PlayOptions, PlayCommandResult, PlayExitReason, PlayIO } from './commands/play.js'
+export { createGame, applyMove, isWon, getStats } from './game/state.js'
+export type { GameState, Move, CellPosition, GameStatus, WinView } from './game/state.js'
+export { parseKeypress, renderGame } from './tui.js'
+export type { ParsedKey, RenderOptions } from './tui.js'
+export { shouldEnableColors } from './format/colors.js'

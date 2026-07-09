@@ -9,6 +9,7 @@ build/
 
 # Coverage
 coverage/
+coverage-report.json
 *.lcov
 
 # Editor

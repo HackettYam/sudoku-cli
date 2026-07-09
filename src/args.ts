@@ -3,20 +3,37 @@ import { parseArgs as parseUtilArgs } from 'node:util'
 /**
  * Discriminator for CLI subcommands.
  */
-export type Subcommand = 'new' | 'solve' | 'validate' | 'hint'
+export type Subcommand = 'new' | 'solve' | 'validate' | 'hint' | 'play'
 
 /**
  * Parsed, type-safe CLI arguments.
  *
- * Exactly one of the four subcommand fields is set.
+ * Exactly one of the subcommand fields is set.
  */
 export type ParsedArgs =
   | { kind: 'new'; difficulty: string | undefined; pretty: boolean }
   | { kind: 'solve'; board: string }
   | { kind: 'validate'; board: string }
   | { kind: 'hint'; board: string }
+  | { kind: 'play'; playArgs: PlayArgs }
   | { kind: 'help' }
   | { kind: 'error'; message: string }
+
+/**
+ * Parsed play subcommand arguments.
+ */
+export interface PlayArgs {
+  /** The play mode to launch. */
+  readonly kind: 'play_tui' | 'play_stats' | 'play_achievements' | 'play_leaderboard'
+  /** Optional difficulty level. */
+  readonly difficulty?: string | undefined
+  /** Optional puzzle ID to load. */
+  readonly load?: string | undefined
+  /** Resume the last played puzzle. */
+  readonly resumeLast?: boolean | undefined
+  /** Show help text. */
+  readonly help?: boolean | undefined
+}
 
 /**
  * Top-level CLI usage text, printed for `--help` and on error.
@@ -59,6 +76,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     case 'solve': return parseBoardArg('solve', argv.slice(1))
     case 'validate': return parseBoardArg('validate', argv.slice(1))
     case 'hint': return parseBoardArg('hint', argv.slice(1))
+    case 'play': return parsePlayArgs(argv.slice(1))
     default:
       return { kind: 'error', message: `Unknown command: '${subcommand}'. Run 'sudoku-cli --help'.` }
   }
@@ -133,4 +151,59 @@ function errorMessage(cause: unknown): string {
   }
 
   return `Invalid arguments: ${msg}. Run 'sudoku-cli --help'.`
+}
+
+/**
+ * Parses the `play` subcommand arguments.
+ *
+ * @param rest - argv after the `play` subcommand.
+ * @returns A {@link ParsedArgs} with play-specific options.
+ */
+function parsePlayArgs(rest: readonly string[]): ParsedArgs {
+  let parsed: ReturnType<typeof parseUtilArgs>
+
+  try {
+    parsed = parseUtilArgs({
+      args: [...rest],
+      options: {
+        difficulty: { type: 'string' },
+        load: { type: 'string' },
+        resume: { type: 'boolean' },
+        stats: { type: 'boolean' },
+        achievements: { type: 'boolean' },
+        leaderboard: { type: 'boolean' },
+        help: { type: 'boolean', short: 'h' },
+      },
+      allowPositionals: true,
+      strict: true,
+    })
+  } catch (cause) {
+    return { kind: 'error', message: errorMessage(cause) }
+  }
+
+  if (parsed.values.help === true) {
+    return { kind: 'help' }
+  }
+
+  // Determine play mode
+  let kind: PlayArgs['kind'] = 'play_tui'
+
+  if (parsed.values.stats === true) {
+    kind = 'play_stats'
+  } else if (parsed.values.achievements === true) {
+    kind = 'play_achievements'
+  } else if (parsed.values.leaderboard === true) {
+    kind = 'play_leaderboard'
+  }
+
+  return {
+    kind: 'play',
+    playArgs: {
+      kind,
+      difficulty: typeof parsed.values.difficulty === 'string' ? parsed.values.difficulty : undefined,
+      load: typeof parsed.values.load === 'string' ? parsed.values.load : undefined,
+      resumeLast: parsed.values.resume === true,
+      help: !!parsed.values.help,
+    },
+  }
 }

@@ -14,6 +14,10 @@ export type CommandResult =
   | { kind: 'parse_error'; reason: string }
   | { kind: 'hint'; row: number; col: number; value: number }
   | { kind: 'no_hint' }
+  | { kind: 'play_exit'; reason: 'quit' | 'won' | 'error'; message?: string }
+  | { kind: 'play_stats'; lines: readonly string[] }
+  | { kind: 'play_achievements'; lines: readonly string[] }
+  | { kind: 'play_leaderboard'; lines: readonly string[] }
 
 /**
  * Process exit codes used by the CLI dispatcher.

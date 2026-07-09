@@ -8,6 +8,10 @@ import { newCommand } from './commands/new.js'
 import { solveCommand } from './commands/solve.js'
 import { validateCommand } from './commands/validate.js'
 import { hintCommand } from './commands/hint.js'
+import { playCommand } from './commands/play.js'
+import { playStatsCommand } from './commands/play-stats.js'
+import { playAchievementsCommand } from './commands/play-achievements.js'
+import { playLeaderboardCommand } from './commands/play-leaderboard.js'
 import { renderGrid } from './format/grid.js'
 import { stdout, stderr, exit } from './output.js'
 import type { CommandResult, ExitCodeValue } from './commands/result.js'
@@ -59,6 +63,58 @@ export async function run(argv: readonly string[]): Promise<ExitCodeValue> {
       return handleResult(validateCommand(args.board), false)
     case 'hint':
       return handleResult(hintCommand(args.board), false)
+    case 'play':
+      return handlePlayArgs(args.playArgs)
+  }
+}
+
+import type { PlayArgs } from './args.js'
+
+async function handlePlayArgs(playArgs: PlayArgs): Promise<ExitCodeValue> {
+  switch (playArgs.kind) {
+    case 'play_tui': {
+      const result = await playCommand({
+        difficulty: playArgs.difficulty,
+        loadId: playArgs.load,
+        resumeLast: playArgs.resumeLast,
+      })
+
+      if (result.reason === 'error') {
+        stderr(result.message ?? 'Unknown error')
+        return 2
+      }
+
+      return 0
+    }
+
+    case 'play_stats': {
+      const result = await playStatsCommand()
+      handlePlayLines(result.lines)
+      return 0
+    }
+
+    case 'play_achievements': {
+      const result = await playAchievementsCommand()
+      handlePlayLines(result.lines)
+      return 0
+    }
+
+    case 'play_leaderboard': {
+      const result = await playLeaderboardCommand()
+      handlePlayLines(result.lines)
+      return 0
+    }
+  }
+}
+
+/**
+ * Writes an array of lines to stdout.
+ *
+ * @param lines - The lines to write.
+ */
+function handlePlayLines(lines: readonly string[]): void {
+  for (const line of lines) {
+    stdout(line)
   }
 }
 
@@ -102,6 +158,19 @@ function handleResult(result: CommandResult, pretty: boolean): ExitCodeValue {
     case 'no_hint':
       stderr('No hint available (puzzle is already complete).')
       return 1
+    case 'play_exit':
+      if (result.reason === 'error') {
+        stderr(result.message ?? 'Unknown error')
+        return 2
+      }
+      return 0
+    case 'play_stats':
+    case 'play_achievements':
+    case 'play_leaderboard':
+      for (const line of result.lines) {
+        stdout(line)
+      }
+      return 0
   }
 }
 

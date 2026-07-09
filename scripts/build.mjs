@@ -39,6 +39,7 @@ await build({
   platform: 'node',
   target: 'node18.3',
   format: 'esm',
+  external: ['proper-lockfile'],
   sourcemap: true,
   logLevel: 'info',
   plugins: [
