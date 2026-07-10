@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { playLeaderboardCommand } from './play-leaderboard.js'
-import { memoryFsAdapter, saveState } from '../persistence/state.js'
-import type { StateFile } from '../persistence/state.js'
-import { inMemoryLockFactory } from '../persistence/lock.js'
+import { playLeaderboardCommand } from '../../commands/play-leaderboard.js'
+import { memoryFsAdapter, saveState } from '../../persistence/state.js'
+import type { StateFile } from '../../persistence/state.js'
+import { inMemoryLockFactory } from '../../persistence/lock.js'
 import { Difficulty } from '@hackettyam/sudoku-tools'
 
 describe('playLeaderboardCommand', () => {

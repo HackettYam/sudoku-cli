@@ -7,8 +7,8 @@ import {
   createLock,
   inMemoryLockFactory,
   nodeLockFactory,
-} from './lock.js'
-import type { LockHandle } from './lock.js'
+} from '../../persistence/lock.js'
+import type { LockHandle } from '../../persistence/lock.js'
 
 // ---------------------------------------------------------------------------
 // Helpers

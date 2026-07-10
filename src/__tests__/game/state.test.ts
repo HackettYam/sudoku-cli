@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createGame, applyMove, isWon, undo, isReadOnly, getStats, type GameState } from './state.js'
+import { createGame, applyMove, isWon, undo, isReadOnly, getStats, type GameState } from '../../game/state.js'
 import { Difficulty } from '@hackettyam/sudoku-tools'
 
 describe('createGame', () => {

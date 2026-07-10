@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayWidth, formatTable } from './table.js'
+import { displayWidth, formatTable } from '../../format/table.js'
 
 describe('displayWidth', () => {
   it('returns string length for ASCII', () => {

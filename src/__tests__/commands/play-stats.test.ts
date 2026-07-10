@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { playStatsCommand } from './play-stats.js'
-import { memoryFsAdapter, saveState } from '../persistence/state.js'
-import type { StateFile } from '../persistence/state.js'
-import { inMemoryLockFactory } from '../persistence/lock.js'
+import { playStatsCommand } from '../../commands/play-stats.js'
+import { memoryFsAdapter, saveState } from '../../persistence/state.js'
+import type { StateFile } from '../../persistence/state.js'
+import { inMemoryLockFactory } from '../../persistence/lock.js'
 import { Difficulty } from '@hackettyam/sudoku-tools'
 
 describe('playStatsCommand', () => {

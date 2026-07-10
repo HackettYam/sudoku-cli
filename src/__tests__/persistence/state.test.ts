@@ -15,11 +15,11 @@ import {
   saveState,
   mergeStats,
   unlockAchievements,
-} from './state.js'
-import { inMemoryLockFactory } from './lock.js'
-import type { StateFile, PerDifficultyStats } from './state.js'
-import type { AchievementId } from './achievements.js'
-import type { LockFactory } from './lock.js'
+} from '../../persistence/state.js'
+import { inMemoryLockFactory } from '../../persistence/lock.js'
+import type { StateFile, PerDifficultyStats } from '../../persistence/state.js'
+import type { AchievementId } from '../../persistence/achievements.js'
+import type { LockFactory } from '../../persistence/lock.js'
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { ACHIEVEMENTS, evaluateAchievements } from './achievements.js'
-import type { AchievementContext } from './achievements.js'
+import { ACHIEVEMENTS, evaluateAchievements } from '../../persistence/achievements.js'
+import type { AchievementContext } from '../../persistence/achievements.js'
 import { Difficulty } from '@hackettyam/sudoku-tools'
 
 // ---------------------------------------------------------------------------

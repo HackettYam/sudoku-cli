@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { Difficulty, type BoardType, type BoardReadOnlyType } from '@hackettyam/sudoku-tools'
 
-import type { GameState } from './game/state.js'
-import { createGame } from './game/state.js'
-import type { AchievementId } from './persistence/achievements.js'
+import type { GameState } from '../game/state.js'
+import { createGame } from '../game/state.js'
+import type { AchievementId } from '../persistence/achievements.js'
 import {
   parseKeypress,
   formatTime,
@@ -18,7 +18,7 @@ import {
   renderAchievementInline,
   renderAchievementDetail,
   renderTrophyArt,
-} from './tui.js'
+} from '../tui.js'
 
 // ---------------------------------------------------------------------------
 // Test helpers

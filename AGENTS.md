@@ -83,7 +83,7 @@ Tests use a similar workaround: `vitest.config.ts` registers the same `@/` → `
 ## Testing
 
 - Vitest 2 with `@vitest/coverage-v8`.
-- Tests are co-located in `src/**/__tests__/*.test.ts` and `src/**/*.test.ts`.
+- All tests are under `src/__tests__/` mirroring the source tree (e.g. `src/__tests__/commands/`, `src/__tests__/persistence/`).
 - **`src/cli.ts` and `src/index.ts` are excluded from coverage** (they are pure dispatch / re-export, hard to unit-test in isolation). The dispatch logic is exercised by the command tests.
 - **100% line / statement / function coverage is the gate** (G-T02). Branch coverage is reported but not enforced (v8 produces false-positive branch counts for ternaries and short-circuit operators that are not realistically reachable).
 - Test fixtures: `123456789456789123789123456234567891567891234891234567345678912678912345912345678` is the library's `SUDOKU_BASE_BOARD` (a valid solved board). For "unsolvable" use `'550000000' + '0'.repeat(72)` (two 5s in row 0).

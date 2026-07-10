@@ -34,3 +34,9 @@ pnpm-debug.log*
 
 # Test artifacts
 .vitest-cache/
+
+# OpenCode
+.opencode/
+AGENTS.md
+opencode.json
+opencode.jsonc

@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createLock, inMemoryLockFactory } from '../lock.js'
-import { loadState, saveState, mergeStats, nodeFsAdapter } from '../state.js'
-import type { StateFile, PerDifficultyStats } from '../state.js'
+import { createLock, inMemoryLockFactory } from '../../persistence/lock.js'
+import { loadState, saveState, mergeStats, nodeFsAdapter } from '../../persistence/state.js'
+import type { StateFile, PerDifficultyStats } from '../../persistence/state.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
