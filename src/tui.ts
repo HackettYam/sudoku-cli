@@ -276,10 +276,20 @@ function renderGrid(state: GameState, options: { readonly colorsEnabled?: boolea
   const colorsOn = options.colorsEnabled ?? false
   const colors = pc.createColors(colorsOn)
   const cellWidth = 3
-  const rowSep = '─'.repeat(cellWidth)
-  const top = `┌${rowSep}┬${rowSep}┬${rowSep}┐`
-  const mid = `├${rowSep}┼${rowSep}┼${rowSep}┤`
-  const bot = `└${rowSep}┴${rowSep}┴${rowSep}┘`
+  const thinH = '─'.repeat(cellWidth)
+  const thickH = '═'.repeat(cellWidth)
+
+  // Top border: ╔═══╤═══╤═══╦═══╤═══╤═══╦═══╤═══╤═══╗
+  const top = `╔${thickH}╤${thickH}╤${thickH}╦${thickH}╤${thickH}╤${thickH}╦${thickH}╤${thickH}╤${thickH}╗`
+
+  // Thin separator: ╟───┼───┼───╫───┼───┼───╫───┼───┼───╢
+  const midThin = `╟${thinH}┼${thinH}┼${thinH}╫${thinH}┼${thinH}┼${thinH}╫${thinH}┼${thinH}┼${thinH}╢`
+
+  // Thick separator: ╠═══╪═══╪═══╬═══╪═══╪═══╬═══╪═══╪═══╣
+  const midThick = `╠${thickH}╪${thickH}╪${thickH}╬${thickH}╪${thickH}╪${thickH}╬${thickH}╪${thickH}╪${thickH}╣`
+
+  // Bottom border: ╚═══╧═══╧═══╩═══╧═══╧═══╩═══╧═══╧═══╝
+  const bot = `╚${thickH}╧${thickH}╧${thickH}╩${thickH}╧${thickH}╧${thickH}╩${thickH}╧${thickH}╧${thickH}╝`
 
   const rows: string[] = [top]
 
@@ -322,14 +332,21 @@ function renderGrid(state: GameState, options: { readonly colorsEnabled?: boolea
       cells.push(display)
     }
 
-    const left = r % 3 === 0 ? '│' : '│'
-    const right = '│'
-    rows.push(`${left}${cells.join('│')}${right}`)
+    // Build row with correct vertical separators
+    let row = '║'
+    for (let c = 0; c < cells.length; c++) {
+      row += cells[c]
+      if (c < cells.length - 1) {
+        row += (c === 2 || c === 5) ? '║' : '│'
+      }
+    }
+    row += '║'
+    rows.push(row)
 
     if (r < 8 && r % 3 !== 2) {
-      rows.push(mid)
+      rows.push(midThin)
     } else if (r < 8) {
-      rows.push(`├${rowSep}┼${rowSep}┼${rowSep}┤`)
+      rows.push(midThick)
     }
   }
 
@@ -480,10 +497,21 @@ export function renderWinBanner(
   const colors = pc.createColors(colorsOn)
   const lines: string[] = []
 
-  const elapsed = Date.now() - state.startedAt
+  // Header
+  const diffName = difficultyToName(state.difficulty)
+  const header = `Sudoku CLI — ${diffName}`
+  lines.push(colorsOn ? colors.dim(colors.bold(header)) : header)
+  lines.push('')
+
+  // Show the solved grid (locked/read-only, dimmed)
+  lines.push(renderGrid(state, { colorsEnabled: colorsOn }))
+  lines.push('')
+
+  const elapsed = state.frozenTime !== undefined
+    ? state.frozenTime - state.startedAt
+    : Date.now() - state.startedAt
   const statsLine = `Time: ${formatTime(elapsed)} · Moves: ${state.moveCount} · Errors: ${state.errorCount}`
 
-  lines.push('')
   if (colorsOn) {
     lines.push(colors.bold(colors.green('🎉 Congratulations! You won!')))
   } else {

@@ -121,4 +121,10 @@ describe('playLeaderboardCommand', () => {
     // 3661000ms = 1:01:01
     expect(output).toContain('1:01:01')
   })
+
+  it('works with default deps', async () => {
+    const result = await playLeaderboardCommand()
+    expect(result.kind).toBe('play_leaderboard')
+    expect(result.lines.length).toBeGreaterThan(0)
+  })
 })

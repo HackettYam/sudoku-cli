@@ -279,6 +279,29 @@ describe('playCommand', () => {
     expect(result.reason).toBe('quit')
   })
 
+  it('unmapped key is ignored (move === null)', async () => {
+    const { io, getRunner } = createMockIO()
+    const persistence = memoryPlayPersistence()
+
+    const resultPromise = playCommand(
+      { difficulty: 'easy' },
+      { io, persistence },
+    )
+
+    await vi.waitFor(() => expect(getRunner()).not.toBeNull())
+    const runner = assertGetRunner(getRunner())
+
+    // 'z' is unmapped → applyKey returns null → move === null branch
+    runner.pressKey('z')
+    // 'q' quits
+    runner.pressKey('q')
+
+    const result = await resultPromise
+
+    expect(result.kind).toBe('play_exit')
+    expect(result.reason).toBe('quit')
+  })
+
   it('fresh game with no moves → quit does not save', async () => {
     const { io, getRunner } = createMockIO()
     const persistence = memoryPlayPersistence()
@@ -322,26 +345,38 @@ describe('playCommand', () => {
   })
 
   it('win scenario → play_exit with reason won', async () => {
-    // The win scenario requires mocking createSudoku to return a known puzzle,
-    // because playCommand creates its own game internally. We test the win path
-    // indirectly via persistence/achievement unit tests. This test verifies the
-    // promise resolution path works when the TUI runner resolves on cleanup.
-    const { io, getRunner } = createMockIO()
-    const persistence = memoryPlayPersistence()
+    vi.useFakeTimers()
+    try {
+      const { io, getRunner } = createMockIO()
+      const persistence = memoryPlayPersistence()
 
-    const resultPromise = playCommand(
-      { difficulty: 'easy' },
-      { io, persistence },
-    )
+      const resultPromise = playCommand(
+        { difficulty: 'easy' },
+        { io, persistence },
+      )
 
-    await vi.waitFor(() => expect(getRunner()).not.toBeNull())
+      await vi.waitFor(() => expect(getRunner()).not.toBeNull())
+      const runner = assertGetRunner(getRunner())
 
-    // Quit immediately — validates that the promise resolves correctly
-    assertGetRunner(getRunner()).pressKey('q')
-    const result = await resultPromise
+      // Navigate to (8,8) and place the correct digit (9) to win
+      runner.pressKey('\x1b[8;5H') // Ctrl-End → cursor at (8,8)
+      runner.pressKey('9')
 
-    expect(result.kind).toBe('play_exit')
-    expect(result.reason).toBe('quit')
+      // Press 'n' to start a new game (stays in session)
+      runner.pressKey('n')
+      // Now quit the new game
+      runner.pressKey('q')
+
+      // Advance past any pending timers
+      await vi.advanceTimersByTimeAsync(2000)
+
+      const result = await resultPromise
+
+      expect(result.kind).toBe('play_exit')
+      expect(result.reason).toBe('quit')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('default persistence is used when deps not provided', async () => {
@@ -518,10 +553,15 @@ describe('playCommand', () => {
     // Place the correct digit (9) to solve the puzzle
     runner.pressKey('9')
 
+    // Dismiss the win screen by pressing 'n' (new game → stays in session)
+    runner.pressKey('n')
+    // Now quit the new game
+    runner.pressKey('q')
+
     const result = await resultPromise
 
     expect(result.kind).toBe('play_exit')
-    expect(result.reason).toBe('won')
+    expect(result.reason).toBe('quit')
 
     // Verify stats were saved
     const { loadState } = await import('../../persistence/state.js')
@@ -564,14 +604,133 @@ describe('playCommand', () => {
     runner.pressKey('\x1b[8;5H') // Ctrl-End → cursor at (8,8)
     runner.pressKey('9')
 
+    // Dismiss the win screen by pressing 'n' (new game → stays in session)
+    runner.pressKey('n')
+    // Now quit the new game
+    runner.pressKey('q')
+
     const result = await resultPromise
 
     expect(result.kind).toBe('play_exit')
-    expect(result.reason).toBe('won')
+    expect(result.reason).toBe('quit')
 
     // Verify stats were updated (totalWins should now be 2)
-    const finalState = await loadState(persistence.fs, persistence.statePath, persistence.lock)
-    expect(finalState.stats[Difficulty.Easy].totalWins).toBe(2)
+    // handleWin is fire-and-forget — wait for it to finish writing stats
+    await new Promise((r) => setTimeout(r, 200))
+    await vi.waitFor(async () => {
+      const finalState = await loadState(persistence.fs, persistence.statePath, persistence.lock)
+      expect(finalState.stats[Difficulty.Easy].totalWins).toBe(2)
+    })
+  })
+
+  it('win scenario → quit from win state resolves with quit', async () => {
+    const { io, getRunner } = createMockIO()
+    const persistence = memoryPlayPersistence()
+
+    const resultPromise = playCommand(
+      { difficulty: 'easy' },
+      { io, persistence },
+    )
+
+    await vi.waitFor(() => expect(getRunner()).not.toBeNull())
+    const runner = assertGetRunner(getRunner())
+
+    // Navigate to (8,8) and place the correct digit (9) to win
+    runner.pressKey('\x1b[8;5H')
+    runner.pressKey('9')
+
+    // Press 'q' while in win state → triggers handleQuit
+    runner.pressKey('q')
+
+    const result = await resultPromise
+
+    expect(result.kind).toBe('play_exit')
+    expect(result.reason).toBe('quit')
+  })
+
+  it('win scenario → escape from win state resolves with quit', async () => {
+    const { io, getRunner } = createMockIO()
+    const persistence = memoryPlayPersistence()
+
+    const resultPromise = playCommand(
+      { difficulty: 'easy' },
+      { io, persistence },
+    )
+
+    await vi.waitFor(() => expect(getRunner()).not.toBeNull())
+    const runner = assertGetRunner(getRunner())
+
+    // Navigate to (8,8) and place the correct digit (9) to win
+    runner.pressKey('\x1b[8;5H')
+    runner.pressKey('9')
+
+    // Press escape while in win state → triggers handleQuit
+    runner.pressKey('\x1b')
+
+    const result = await resultPromise
+
+    expect(result.kind).toBe('play_exit')
+    expect(result.reason).toBe('quit')
+  })
+
+  it('win scenario → toggle achievements view in win state', async () => {
+    const { io, getRunner } = createMockIO()
+    const persistence = memoryPlayPersistence()
+
+    const resultPromise = playCommand(
+      { difficulty: 'easy' },
+      { io, persistence },
+    )
+
+    await vi.waitFor(() => expect(getRunner()).not.toBeNull())
+    const runner = assertGetRunner(getRunner())
+
+    // Navigate to (8,8) and place the correct digit (9) to win
+    runner.pressKey('\x1b[8;5H')
+    runner.pressKey('9')
+
+    // Toggle achievements view (press 'a')
+    runner.pressKey('a')
+    // Exit achievements view (press any key)
+    runner.pressKey('x')
+    // Press 'n' to start a new game (stays in session)
+    runner.pressKey('n')
+    // Now quit the new game
+    runner.pressKey('q')
+
+    const result = await resultPromise
+
+    expect(result.kind).toBe('play_exit')
+    expect(result.reason).toBe('quit')
+  })
+
+  it('win scenario → other key re-renders win screen', async () => {
+    const { io, getRunner } = createMockIO()
+    const persistence = memoryPlayPersistence()
+
+    const resultPromise = playCommand(
+      { difficulty: 'easy' },
+      { io, persistence },
+    )
+
+    await vi.waitFor(() => expect(getRunner()).not.toBeNull())
+    const runner = assertGetRunner(getRunner())
+
+    // Navigate to (8,8) and place the correct digit (9) to win
+    runner.pressKey('\x1b[8;5H')
+    runner.pressKey('9')
+
+    // Press an irrelevant key (should re-render, not quit)
+    runner.pressKey('z')
+    // Then press 'n' to start a new game (stays in session)
+    runner.pressKey('n')
+    // Now quit the new game
+    runner.pressKey('q')
+
+    const result = await resultPromise
+
+    expect(result.kind).toBe('play_exit')
+    expect(result.reason).toBe('quit')
   })
 
   it('defaultPlayIO → creates working runner', async () => {
@@ -633,11 +792,17 @@ describe('playCommand', () => {
     runner.pressKey('\x1b[8;5H') // Ctrl-End → cursor at (8,8)
     runner.pressKey('9')
 
+    // Dismiss the win screen by pressing 'n' (new game → stays in session)
+    runner.pressKey('n')
+    // Now quit the new game
+    runner.pressKey('q')
+
     const result = await resultPromise
 
-    // Despite saveState throwing, handleWin catch block returns 'won'
+    // Despite saveState throwing, handleWin catch block handles it
+    // and the session exits cleanly with quit
     expect(result.kind).toBe('play_exit')
-    expect(result.reason).toBe('won')
+    expect(result.reason).toBe('quit')
   })
 
   it('handleQuit catch block exercised when saveGame throws', async () => {
@@ -720,6 +885,34 @@ describe('playCommand', () => {
     expect(result.kind).toBe('play_exit')
     expect(result.reason).toBe('quit')
   })
+
+  it('setInterval timer refreshes draw while session is active', async () => {
+    vi.useFakeTimers()
+    try {
+      const { io, getRunner } = createMockIO()
+      const persistence = memoryPlayPersistence()
+      const resultPromise = playCommand({ difficulty: 'easy' }, { io, persistence })
+
+      // Flush microtasks until TUI session is created
+      let runner = getRunner()
+      for (let i = 0; i < 50 && runner === null; i++) {
+        await vi.advanceTimersByTimeAsync(0)
+        runner = getRunner()
+      }
+      if (runner === null) throw new Error('Runner not created')
+
+      // Advance timer by 1s to trigger setInterval
+      await vi.advanceTimersByTimeAsync(1000)
+
+      // Quit to clean up
+      runner.pressKey('q')
+      await vi.advanceTimersByTimeAsync(0)
+      const result = await resultPromise
+      expect(result.kind).toBe('play_exit')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('memoryPlayPersistence', () => {
@@ -758,6 +951,50 @@ describe('defaultPlayIO', () => {
       stdoutSpy.mockRestore()
       stderrSpy.mockRestore()
       exitSpy.mockRestore()
+    }
+  })
+
+  it('appends newline when input has no trailing newline', async () => {
+    const mod = await import('../../commands/play.js')
+    const io = mod.defaultPlayIO()
+
+    const stdoutSpy = vi
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(() => true)
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true)
+
+    try {
+      io.stdout('hello')
+      expect(stdoutSpy).toHaveBeenCalledWith('hello\n')
+      io.stderr('world')
+      expect(stderrSpy).toHaveBeenCalledWith('world\n')
+    } finally {
+      stdoutSpy.mockRestore()
+      stderrSpy.mockRestore()
+    }
+  })
+
+  it('does not duplicate trailing newline', async () => {
+    const mod = await import('../../commands/play.js')
+    const io = mod.defaultPlayIO()
+
+    const stdoutSpy = vi
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(() => true)
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true)
+
+    try {
+      io.stdout('hello\n')
+      expect(stdoutSpy).toHaveBeenCalledWith('hello\n')
+      io.stderr('world\n')
+      expect(stderrSpy).toHaveBeenCalledWith('world\n')
+    } finally {
+      stdoutSpy.mockRestore()
+      stderrSpy.mockRestore()
     }
   })
 })

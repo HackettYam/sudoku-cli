@@ -135,4 +135,10 @@ describe('playStatsCommand', () => {
     // 65000ms = 1:05 (formatTime pads minutes to 2 digits)
     expect(output).toContain('Best time: 01:05')
   })
+
+  it('works with default deps', async () => {
+    const result = await playStatsCommand()
+    expect(result.kind).toBe('play_stats')
+    expect(result.lines.length).toBeGreaterThan(0)
+  })
 })

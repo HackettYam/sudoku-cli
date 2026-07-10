@@ -269,10 +269,11 @@ describe('renderGame', () => {
   it('renders grid with box-drawing characters', () => {
     const state = createGame(Difficulty.Easy)
     const output = renderGame(state)
-    expect(output).toContain('┌')
-    expect(output).toContain('┐')
-    expect(output).toContain('└')
-    expect(output).toContain('┘')
+    expect(output).toContain('╔')
+    expect(output).toContain('╗')
+    expect(output).toContain('╚')
+    expect(output).toContain('╝')
+    expect(output).toContain('═')
     expect(output).toContain('─')
     expect(output).toContain('│')
   })
@@ -830,6 +831,109 @@ describe('renderTrophyArt', () => {
     const output = renderTrophyArt()
     const lines = output.split('\n')
     expect(lines.length).toBeGreaterThanOrEqual(8)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Colors disabled — no ANSI escape sequences
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Part 5: Grid Pattern — Unicode box-drawing characters
+// ---------------------------------------------------------------------------
+
+describe('grid pattern — Unicode box-drawing characters', () => {
+  const gridOutput = (() => {
+    const state = createGame(Difficulty.Normal)
+    return renderGame(state, { colorsEnabled: false })
+  })()
+
+  const gridLines = gridOutput.split('\n')
+
+  it('top border matches pattern ╔═══╤═══╤═══╦═══╤═══╤═══╦═══╤═══╤═══╗', () => {
+    const topBorder = gridLines.find((l) => l.startsWith('╔'))
+    expect(topBorder).toBe('╔═══╤═══╤═══╦═══╤═══╤═══╦═══╤═══╤═══╗')
+  })
+
+  it('bottom border matches pattern ╚═══╧═══╧═══╩═══╧═══╧═══╩═══╧═══╧═══╝', () => {
+    const botBorder = gridLines.find((l) => l.startsWith('╚'))
+    expect(botBorder).toBe('╚═══╧═══╧═══╩═══╧═══╧═══╩═══╧═══╧═══╝')
+  })
+
+  it('thin separator matches pattern ╟───┼───┼───╫───┼───┼───╫───┼───┼───╢', () => {
+    const thinSeps = gridLines.filter((l) => l.startsWith('╟'))
+    expect(thinSeps.length).toBe(6)
+    for (const sep of thinSeps) {
+      expect(sep).toBe('╟───┼───┼───╫───┼───┼───╫───┼───┼───╢')
+    }
+  })
+
+  it('thick separator matches pattern ╠═══╪═══╪═══╬═══╪═══╪═══╬═══╪═══╪═══╣', () => {
+    const thickSeps = gridLines.filter((l) => l.startsWith('╠'))
+    expect(thickSeps.length).toBe(2)
+    for (const sep of thickSeps) {
+      expect(sep).toBe('╠═══╪═══╪═══╬═══╪═══╪═══╬═══╪═══╪═══╣')
+    }
+  })
+
+  it('data rows use ║ between 3×3 boxes and │ within', () => {
+    const dataRows = gridLines.filter(
+      (l) => l.startsWith('║') && l.endsWith('║'),
+    )
+    expect(dataRows.length).toBe(9)
+
+    for (const row of dataRows) {
+      expect(row.startsWith('║')).toBe(true)
+      expect(row.endsWith('║')).toBe(true)
+
+      // Exactly 4 double-vertical: left edge + 2 between boxes + right edge
+      const doubleVerticalCount = (row.match(/║/gu) || []).length
+      expect(doubleVerticalCount).toBe(4)
+
+      // Exactly 6 single-vertical: 2 per box × 3 boxes
+      const singleVerticalCount = (row.match(/│/gu) || []).length
+      expect(singleVerticalCount).toBe(6)
+    }
+  })
+
+  it('grid has exactly 19 lines (top + 9 rows + 6 thin + 2 thick + bottom)', () => {
+    const gridSection = gridLines.filter(
+      (l) =>
+        l.startsWith('╔') ||
+        l.startsWith('║') ||
+        l.startsWith('╟') ||
+        l.startsWith('╠') ||
+        l.startsWith('╚'),
+    )
+    expect(gridSection.length).toBe(19)
+  })
+
+  it('all 20 box-drawing characters are present', () => {
+    // Double line chars
+    expect(gridOutput).toContain('╔')
+    expect(gridOutput).toContain('╗')
+    expect(gridOutput).toContain('╚')
+    expect(gridOutput).toContain('╝')
+    expect(gridOutput).toContain('║')
+    expect(gridOutput).toContain('═')
+    expect(gridOutput).toContain('╦')
+    expect(gridOutput).toContain('╩')
+    expect(gridOutput).toContain('╠')
+    expect(gridOutput).toContain('╣')
+    expect(gridOutput).toContain('╬')
+
+    // Single line chars
+    expect(gridOutput).toContain('─')
+    expect(gridOutput).toContain('│')
+    expect(gridOutput).toContain('┼')
+
+    // Mixed junction chars
+    expect(gridOutput).toContain('╤')
+    expect(gridOutput).toContain('╧')
+    expect(gridOutput).toContain('╟')
+    expect(gridOutput).toContain('╢')
+    expect(gridOutput).toContain('╪')
+    expect(gridOutput).toContain('╫')
   })
 })
 

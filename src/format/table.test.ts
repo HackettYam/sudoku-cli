@@ -19,6 +19,21 @@ describe('displayWidth', () => {
   it('returns 0 for empty string', () => {
     expect(displayWidth('')).toBe(0)
   })
+
+  it('returns 2 for CJK characters', () => {
+    expect(displayWidth('漢')).toBe(2)
+    expect(displayWidth('字')).toBe(2)
+    expect(displayWidth('漢字')).toBe(4)
+  })
+
+  it('returns 2 for emoji characters', () => {
+    expect(displayWidth('🎉')).toBe(2)
+    expect(displayWidth('🏆')).toBe(2)
+  })
+
+  it('handles mixed ASCII and CJK', () => {
+    expect(displayWidth('a漢b')).toBe(4) // 1 + 2 + 1
+  })
 })
 
 describe('formatTable', () => {
@@ -67,5 +82,14 @@ describe('formatTable', () => {
 | x      | 1   |
 +--------+-----+"
 `)
+  })
+
+  it('handles rows with fewer cells than columns', () => {
+    const result = formatTable(
+      [{ header: 'A' }, { header: 'B' }, { header: 'C' }],
+      [['x']], // row has 1 cell, 3 columns defined
+    )
+    expect(result).toContain('x')
+    expect(result).toContain('A')
   })
 })

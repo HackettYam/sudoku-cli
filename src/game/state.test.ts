@@ -190,7 +190,7 @@ describe('applyMove - hint', () => {
     const state = createGame(Difficulty.Easy)
     const next = applyMove(state, { kind: 'hint' })
     expect(next.hintCount).toBe(1)
-    expect(next.moveCount).toBe(0) // hint does NOT increment moveCount
+    expect(next.moveCount).toBe(1) // hint increments moveCount
     expect(next.history.length).toBe(1) // synthetic place in history
   })
 
@@ -378,5 +378,94 @@ describe('getStats', () => {
     expect(stats.undoCount).toBe(0)
     expect(stats.errorCount).toBe(0)
     expect(stats.elapsedMs).toBeGreaterThanOrEqual(0)
+  })
+})
+
+describe('cumulative errorCount', () => {
+  it('increments on wrong placement', () => {
+    const state = createGame(Difficulty.Easy)
+    // Find an editable cell and place a wrong value
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        if (!state.readOnly[r]?.[c]) {
+          const correctVal = (state.solution[r] as number[])[c] as number
+          const wrongVal = correctVal === 1 ? 2 : 1
+          const next = applyMove(state, { kind: 'place', row: r, col: c, value: wrongVal })
+          expect(next.errorCount).toBe(1)
+          return
+        }
+      }
+    }
+  })
+
+  it('does not increment on correct placement', () => {
+    const state = createGame(Difficulty.Easy)
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        if (!state.readOnly[r]?.[c]) {
+          const val = (state.solution[r] as number[])[c] as number
+          const next = applyMove(state, { kind: 'place', row: r, col: c, value: val })
+          expect(next.errorCount).toBe(0)
+          return
+        }
+      }
+    }
+  })
+
+  it('accumulates across multiple wrong placements', () => {
+    const state = createGame(Difficulty.Easy)
+    let s = state
+    let placed = 0
+    for (let r = 0; r < 9 && placed < 3; r++) {
+      for (let c = 0; c < 9 && placed < 3; c++) {
+        if (!s.readOnly[r]?.[c]) {
+          const correctVal = (s.solution[r] as number[])[c] as number
+          const wrongVal = correctVal === 1 ? 2 : 1
+          s = applyMove(s, { kind: 'place', row: r, col: c, value: wrongVal })
+          placed++
+        }
+      }
+    }
+    expect(s.errorCount).toBe(3)
+  })
+
+  it('does not decrement on clear', () => {
+    const state = createGame(Difficulty.Easy)
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        if (!state.readOnly[r]?.[c]) {
+          const correctVal = (state.solution[r] as number[])[c] as number
+          const wrongVal = correctVal === 1 ? 2 : 1
+          const placed = applyMove(state, { kind: 'place', row: r, col: c, value: wrongVal })
+          expect(placed.errorCount).toBe(1)
+          const cleared = applyMove(placed, { kind: 'clear', row: r, col: c })
+          expect(cleared.errorCount).toBe(1) // still 1, not decremented
+          return
+        }
+      }
+    }
+  })
+
+  it('does not decrement on undo', () => {
+    const state = createGame(Difficulty.Easy)
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        if (!state.readOnly[r]?.[c]) {
+          const correctVal = (state.solution[r] as number[])[c] as number
+          const wrongVal = correctVal === 1 ? 2 : 1
+          const placed = applyMove(state, { kind: 'place', row: r, col: c, value: wrongVal })
+          expect(placed.errorCount).toBe(1)
+          const undone = undo(placed)
+          expect(undone.errorCount).toBe(1) // still 1, not decremented
+          return
+        }
+      }
+    }
+  })
+
+  it('does not change on hint', () => {
+    const state = createGame(Difficulty.Easy)
+    const next = applyMove(state, { kind: 'hint' })
+    expect(next.errorCount).toBe(0) // unchanged from initial
   })
 })

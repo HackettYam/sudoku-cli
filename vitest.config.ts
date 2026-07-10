@@ -39,6 +39,7 @@ export default defineConfig({
         'src/cli.ts',
         'src/index.ts',
         '**/proper-lockfile.d.ts',
+        'AGENTS.md',
       ],
       thresholds: {
         // G-T02: 100% line coverage for all exported functions.

@@ -102,4 +102,10 @@ describe('playAchievementsCommand', () => {
     expect(result.lines).toContain('11/11 unlocked')
     expect(result.lines).not.toContain('Locked:')
   })
+
+  it('works with default deps', async () => {
+    const result = await playAchievementsCommand()
+    expect(result.kind).toBe('play_achievements')
+    expect(result.lines.length).toBeGreaterThan(0)
+  })
 })

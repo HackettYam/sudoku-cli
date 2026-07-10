@@ -2,7 +2,13 @@ import type { DifficultyType } from '@hackettyam/sudoku-tools'
 import { deserializeBoard } from '@hackettyam/sudoku-tools'
 import { createGame, applyMove, getStats } from '../game/state.js'
 import type { GameState } from '../game/state.js'
-import { parseKeypress, renderGame, applyKey } from '../tui.js'
+import {
+  parseKeypress,
+  renderGame,
+  renderWinBanner,
+  renderAchievementDetail,
+  applyKey,
+} from '../tui.js'
 import { runTuiSession } from '../output.js'
 import type { TuiSessionOptions, TuiRunner } from '../output.js'
 import { loadState, saveState, mergeStats, unlockAchievements } from '../persistence/state.js'
@@ -10,6 +16,7 @@ import type { FsAdapter } from '../persistence/state.js'
 import { saveGame, loadGame, latestSaveId } from '../persistence/save.js'
 import type { SaveFile } from '../persistence/save.js'
 import { evaluateAchievements } from '../persistence/achievements.js'
+import type { AchievementId } from '../persistence/achievements.js'
 
 import { nodeLockFactory, inMemoryLockFactory } from '../persistence/lock.js'
 import type { LockFactory } from '../persistence/lock.js'
@@ -57,6 +64,8 @@ export interface PlayCommandResult {
   readonly kind: 'play_exit'
   readonly reason: PlayExitReason
   readonly message?: string
+  readonly newAchievements?: readonly AchievementId[]
+  readonly totalUnlocked?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +155,8 @@ function runPlaySession(
   return new Promise<PlayCommandResult>((resolve) => {
     let currentState = state
     let resolved = false
+    let lastNewAchievements: readonly AchievementId[] = []
+    let lastTotalUnlocked = 0
 
     const runner = io.createTuiSession({
       colorsEnabled: true,
@@ -155,6 +166,45 @@ function runPlaySession(
         const keys = parseKeypress(key)
 
         for (const parsedKey of keys) {
+          // Handle win state keys separately (before applyKey)
+          if (currentState.status === 'won') {
+            // If in achievements view, any key goes back to win menu
+            if (currentState.winView === 'achievements') {
+              currentState = applyMove(currentState, { kind: 'toggle-achievements' })
+              runner.draw()
+              return
+            }
+
+            if (parsedKey.kind === 'char' && (parsedKey.char === 'n' || parsedKey.char === 'N')) {
+              // Start a new game with the same difficulty — stay in the session
+              currentState = createGame(currentState.difficulty)
+              startTimer()
+              runner.draw()
+              return
+            }
+            if (
+              (parsedKey.kind === 'char' && (parsedKey.char === 'q' || parsedKey.char === 'Q')) ||
+              parsedKey.kind === 'escape'
+            ) {
+              // Quit
+              resolved = true
+              if (timerInterval) clearInterval(timerInterval)
+              runner.cleanup()
+              handleQuit(currentState, persistence).then(resolve)
+              return
+            }
+            if (parsedKey.kind === 'char' && (parsedKey.char === 'a' || parsedKey.char === 'A')) {
+              // Toggle achievements
+              currentState = applyMove(currentState, { kind: 'toggle-achievements' })
+              runner.draw()
+              return
+            }
+            // Any other key: re-render win screen (no-op)
+            runner.draw()
+            return
+          }
+
+          // Normal game key handling
           const move = applyKey(currentState, parsedKey)
 
           if (move === null) continue
@@ -162,14 +212,22 @@ function runPlaySession(
           currentState = applyMove(currentState, move)
 
           if (currentState.status === 'won') {
-            resolved = true
-            runner.cleanup()
-            handleWin(currentState, persistence).then(resolve)
+            if (timerInterval) clearInterval(timerInterval)
+            // Cache achievement data for the render function
+            handleWin(currentState, persistence).then((result) => {
+              if (result.kind === 'play_exit' && result.reason === 'won') {
+                lastNewAchievements = result.newAchievements ?? []
+                lastTotalUnlocked = result.totalUnlocked ?? 0
+              }
+            })
+            // render() is now state-aware — it will show win screen
+            runner.draw()
             return
           }
 
           if (currentState.status === 'quit') {
             resolved = true
+            if (timerInterval) clearInterval(timerInterval)
             runner.cleanup()
             handleQuit(currentState, persistence).then(resolve)
             return
@@ -179,10 +237,51 @@ function runPlaySession(
         runner.draw()
       },
       render: () => {
-        const screen = renderGame(currentState, { colorsEnabled: true })
-        io.stdout(screen)
+        if (currentState.status === 'won') {
+          if (currentState.winView === 'achievements') {
+            // Compute achievements for the detail view
+            const stats = getStats(currentState)
+            const perDifficultyWins: Record<string, number> = {}
+            const difficultiesWon: string[] = []
+            // Use a default empty state if we can't load synchronously
+            const ctx = {
+              difficulty: currentState.difficulty,
+              elapsedMs: stats.elapsedMs,
+              moveCount: stats.moveCount,
+              hintCount: currentState.hintCount,
+              undoCount: currentState.undoCount,
+              errors: [] as readonly string[],
+              perDifficultyWins: perDifficultyWins as Record<DifficultyType, number>,
+              difficultiesWon: difficultiesWon as DifficultyType[],
+            }
+            const achievements = evaluateAchievements(ctx)
+            const achievementOutput = renderAchievementDetail(
+              achievements,
+              lastTotalUnlocked,
+              { colorsEnabled: true },
+            )
+            io.stdout(achievementOutput)
+          } else {
+            const winOutput = renderWinBanner(currentState, { colorsEnabled: true }, lastNewAchievements)
+            io.stdout(winOutput)
+          }
+        } else {
+          const screen = renderGame(currentState, { colorsEnabled: true })
+          io.stdout(screen)
+        }
       },
     })
+
+    // Periodic timer refresh every second
+    let timerInterval: ReturnType<typeof setInterval> | undefined
+
+    function startTimer(): void {
+      timerInterval = setInterval(() => {
+        if (!resolved && currentState.status !== 'won') runner.draw()
+      }, 1000)
+    }
+
+    startTimer()
 
     runner.draw()
     runner.run()
@@ -252,7 +351,8 @@ async function handleWin(
 
     await saveState(persistence.fs, persistence.statePath, newState, persistence.lock)
 
-    return { kind: 'play_exit', reason: 'won' }
+    const totalUnlocked = Object.keys(newState.achievements).length
+    return { kind: 'play_exit', reason: 'won', newAchievements, totalUnlocked }
   } catch {
     return { kind: 'play_exit', reason: 'won' }
   }

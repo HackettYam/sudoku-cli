@@ -2,8 +2,6 @@ import {
   clearCell,
   cloneBoard,
   createSudoku,
-  getHint,
-  getInvalidCells,
   isSolved,
   setCellValue,
 } from '@hackettyam/sudoku-tools'
@@ -20,7 +18,10 @@ export interface CellPosition {
   readonly col: number
 }
 
-/** Discriminated union of all player actions. */
+/**
+ * Discriminated union of all player actions.
+ * Note: `hint` moves also increment `moveCount` (not just `hintCount`).
+ */
 export type Move =
   | { readonly kind: 'place'; readonly row: number; readonly col: number; readonly value: number }
   | { readonly kind: 'clear'; readonly row: number; readonly col: number }
@@ -53,6 +54,7 @@ export interface GameState {
   readonly undoCount: number
   readonly errorCount: number
   readonly startedAt: number
+  readonly frozenTime?: number
 }
 
 /**
@@ -161,7 +163,7 @@ export function undo(state: GameState): GameState {
     history: newHistory,
     moveCount: newHistory.length,
     undoCount: state.undoCount + 1,
-    errorCount: getInvalidCells(previousBoard, state.solution).length,
+    errorCount: state.errorCount,
   }
 }
 
@@ -219,11 +221,6 @@ function isReadOnlyCell(state: GameState, row: number, col: number): boolean {
   return state.readOnly[row]?.[col] ?? true
 }
 
-/** Recompute errorCount from the current board and solution. */
-function computeErrorCount(board: BoardType, solution: BoardType): number {
-  return getInvalidCells(board, solution).length
-}
-
 /** Apply a `place` move. No-op if the cell is read-only. */
 function applyPlace(
   state: GameState,
@@ -240,13 +237,15 @@ function applyPlace(
     value: value as CellValue,
   })
   const won = isSolved(newBoard, state.solution)
+  const placedWrong = value !== state.solution[row]?.[col]
   return {
     ...state,
     board: newBoard,
     history: [...state.history, state.board],
     moveCount: state.moveCount + 1,
-    errorCount: computeErrorCount(newBoard, state.solution),
+    errorCount: placedWrong ? state.errorCount + 1 : state.errorCount,
     status: won ? 'won' : state.status,
+    ...(won ? { frozenTime: Date.now() } : {}),
   }
 }
 
@@ -261,7 +260,7 @@ function applyClear(state: GameState, row: number, col: number): GameState {
     board: newBoard,
     history: [...state.history, state.board],
     moveCount: state.moveCount + 1,
-    errorCount: computeErrorCount(newBoard, state.solution),
+    errorCount: state.errorCount,
   }
 }
 
@@ -279,31 +278,48 @@ function applyMoveCursor(
   }
 }
 
-/** Apply a `hint` move. Places the solution value in the first empty editable cell. */
+/** Apply a `hint` move. Places the solution value in a random empty editable cell. Increments moveCount. */
 function applyHint(state: GameState): GameState {
   if (state.status !== 'playing') {
     return state
   }
-  const hint = getHint(state.board, state.solution)
-  if (hint === null) {
-    return state
+
+  // Find all empty editable cells
+  const candidates: { row: number; col: number }[] = []
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      if (!isReadOnlyCell(state, r, c) && state.board[r]?.[c] === 0) {
+        candidates.push({ row: r, col: c })
+      }
+    }
   }
-  if (isReadOnlyCell(state, hint.row, hint.col)) {
-    return state
-  }
+
+  if (candidates.length === 0) return state
+
+  // Pick a random candidate
+  const idx = Math.floor(Math.random() * candidates.length)
+  const candidate = candidates[idx]
+  if (candidate === undefined) return state
+  const { row, col } = candidate
+  const value = state.solution[row]?.[col]
+  if (value === undefined || value === 0) return state
+
   const newBoard = setCellValue(state.board, {
-    row: hint.row,
-    col: hint.col,
-    value: hint.value,
+    row,
+    col,
+    value: value as CellValue,
   })
   const won = isSolved(newBoard, state.solution)
+
   return {
     ...state,
     board: newBoard,
     history: [...state.history, state.board],
+    moveCount: state.moveCount + 1,
     hintCount: state.hintCount + 1,
-    errorCount: computeErrorCount(newBoard, state.solution),
+    errorCount: state.errorCount,
     status: won ? 'won' : state.status,
+    ...(won ? { frozenTime: Date.now() } : {}),
   }
 }
 
