@@ -38,6 +38,7 @@ export default defineConfig({
         'src/**/*.test.ts',
         'src/cli.ts',
         'src/index.ts',
+        'src/commands/contract.ts',
         '**/proper-lockfile.d.ts',
         'AGENTS.md',
       ],

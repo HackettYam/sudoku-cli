@@ -1,5 +1,8 @@
+import { parseArgs as parseUtilArgs } from 'node:util'
 import { getHint, solvePuzzle } from '@hackettyam/sudoku-tools'
 import { parseBoard } from '../format/board-string.js'
+import { errorMessage } from './_error-message.js'
+import type { CommandContract, CommandContext, ParseResult } from './contract.js'
 import type { CommandResult } from './result.js'
 
 /**
@@ -42,4 +45,62 @@ export function hintCommand(input: string): CommandResult {
   }
 
   return { kind: 'hint', row: hint.row, col: hint.col, value: hint.value }
+}
+
+/**
+ * Parsed args shape for the `hint` contract.
+ *
+ * The single positional `board` is an 81-char digit string; whitespace is
+ * stripped by `parseBoard` inside `hintCommand`.
+ */
+export interface HintArgs {
+  readonly board: string
+}
+
+/**
+ * Contract for the `hint` subcommand.
+ *
+ * Accepts exactly one positional (the 81-char board string) and no
+ * options. The `parse` method strips `--help`/`-h` before delegating to
+ * `parseUtilArgs` (configured `strict: true` with `options: {}`); unknown
+ * flags therefore surface as parse errors via `errorMessage`.
+ *
+ * @see requirements.md AC-2
+ * @see design.md Interfaces
+ * @see tasks.md T-005
+ */
+export const hintContract: CommandContract<HintArgs> = {
+  name: 'hint',
+  summary: 'Suggest the next move',
+  options: {},
+  positional: { name: 'board', required: true, desc: '81-char board string' },
+  parse(rest: readonly string[]): ParseResult<HintArgs> {
+    if (rest.includes('--help') || rest.includes('-h')) {
+      return { ok: 'help' }
+    }
+
+    let parsed: ReturnType<typeof parseUtilArgs>
+
+    try {
+      parsed = parseUtilArgs({
+        args: [...rest],
+        options: {},
+        allowPositionals: true,
+        strict: true,
+      })
+    } catch (cause) {
+      return { ok: false, message: errorMessage(cause) }
+    }
+
+    const board = parsed.positionals[0]
+
+    if (board === undefined) {
+      return { ok: false, message: "'hint' requires a board string argument." }
+    }
+
+    return { ok: true, args: { board } }
+  },
+  run(args: HintArgs, _ctx: CommandContext): Promise<CommandResult> {
+    return Promise.resolve(hintCommand(args.board))
+  },
 }

@@ -1,54 +1,150 @@
-import { parseArgs as parseUtilArgs } from 'node:util'
+import { commands, commandsByName, type CommandName } from './commands/index.js'
+import type { CommandContract } from './commands/contract.js'
 
 /**
- * Discriminator for CLI subcommands.
- */
-export type Subcommand = 'new' | 'solve' | 'validate' | 'hint' | 'play'
-
-/**
- * Parsed, type-safe CLI arguments.
+ * Discriminated union over the registry.
  *
- * Exactly one of the subcommand fields is set.
+ * Computed via four explicit variants (rather than a mapped type) so the
+ * dispatcher in `cli.ts` can branch on `kind` without narrowing `unknown`
+ * at every case. The `cmd` variant carries the parsed `args: unknown`;
+ * `cli.ts` casts to the contract-specific type when dispatching.
+ *
+ * @see requirements.md AC-3
+ * @see design.md Decision 3
  */
 export type ParsedArgs =
-  | { kind: 'new'; difficulty: string | undefined; pretty: boolean }
-  | { kind: 'solve'; board: string }
-  | { kind: 'validate'; board: string }
-  | { kind: 'hint'; board: string }
-  | { kind: 'play'; playArgs: PlayArgs }
-  | { kind: 'help' }
-  | { kind: 'error'; message: string }
+  | { readonly kind: 'top_help' }
+  | { readonly kind: 'error'; readonly message: string }
+  | { readonly kind: 'cmd_help'; readonly command: CommandName; readonly helpText: string }
+  | { readonly kind: 'cmd'; readonly command: CommandName; readonly args: unknown }
 
-/**
- * Parsed play subcommand arguments.
- */
-export interface PlayArgs {
-  /** The play mode to launch. */
-  readonly kind: 'play_tui' | 'play_stats' | 'play_achievements' | 'play_leaderboard'
-  /** Optional difficulty level. */
-  readonly difficulty?: string | undefined
-  /** Optional puzzle ID to load. */
-  readonly load?: string | undefined
-  /** Resume the last played puzzle. */
-  readonly resumeLast?: boolean | undefined
-  /** Show help text. */
-  readonly help?: boolean | undefined
+/** Pad `s` to `width` with trailing spaces. */
+function padEnd(s: string, width: number): string {
+  return s.length >= width ? s : s + ' '.repeat(width - s.length)
 }
 
 /**
- * Top-level CLI usage text, printed for `--help` and on error.
+ * Hardcoded placeholder map for byte-equal HELP_TEXT promise (AC-4).
+ *
+ * Options with a `string` type get a placeholder shown in help text.
+ * Most options use the generic `<value>`; a few are named for clarity.
  */
-export const HELP_TEXT = `Usage: sudoku-cli <command> [options]
+function getOptionPlaceholder(name: string, def: { type: 'string' | 'boolean' }): string | undefined {
+  if (def.type === 'boolean') return undefined
+  const placeholders: Readonly<Record<string, string>> = {
+    difficulty: '<level>',
+    load: '<id>',
+  }
+  return placeholders[name] ?? '<value>'
+}
 
-Commands:
-  new [--difficulty <level>] [--pretty]   Generate a new puzzle
-  solve <board>                           Solve a puzzle
-  validate <board>                        Validate a puzzle
-  hint <board>                            Suggest the next move
+/** Format the "name [options/positional]" portion of a top-level help row. */
+function formatName(contract: CommandContract<unknown>): string {
+  const userOptions = Object.entries(contract.options).filter(([n]) => n !== 'help')
 
-Difficulty levels: novice, easy, normal, hard, expert (default: normal)
-Run 'sudoku-cli <command> --help' for command-specific help.
-`
+  if (userOptions.length >= 3) {
+    return `${contract.name} [options]`
+  }
+
+  const parts: string[] = [contract.name]
+
+  if (contract.positional !== undefined) {
+    const wrap = contract.positional.required ? '<' : '[<'
+    const close = contract.positional.required ? '>' : '>]'
+    parts.push(`${wrap}${contract.positional.name}${close}`)
+  }
+
+  for (const [optName, optDef] of userOptions) {
+    const placeholder = getOptionPlaceholder(optName, optDef)
+    if (optDef.type === 'string' && placeholder !== undefined) {
+      parts.push(`[--${optName} ${placeholder}]`)
+    } else {
+      parts.push(`[--${optName}]`)
+    }
+  }
+
+  return parts.join(' ')
+}
+
+/**
+ * Render the top-level CLI usage text.
+ *
+ * @param cmds - The full command registry (from `src/commands/index.js`).
+ * @returns A multi-line string with column-aligned command rows.
+ *
+ * @see requirements.md AC-4
+ */
+export function renderTopHelp(cmds: readonly CommandContract<unknown>[]): string {
+  const COL_WIDTH = 42
+  const rows = cmds.map((c) => {
+    const name = formatName(c)
+    return `  ${padEnd(name, COL_WIDTH - 2)}${c.summary}`
+  })
+  return [
+    'Usage: sudoku-cli <command> [options]',
+    '',
+    'Commands:',
+    ...rows,
+    '',
+    'Difficulty levels: novice, easy, normal, hard, expert (default: normal)',
+    "Run 'sudoku-cli <command> --help' for command-specific help.",
+    '',
+  ].join('\n')
+}
+
+/**
+ * Render per-command help text.
+ *
+ * @param contract - The command contract to render help for.
+ * @returns A multi-line string with usage, description, options table, and footer.
+ *
+ * @see requirements.md AC-5
+ */
+export function renderCommandHelp(contract: CommandContract<unknown>): string {
+  const lines: string[] = []
+
+  // Usage line: "Usage: sudoku-cli <name> [positional] [options]"
+  const usageParts: string[] = [contract.name]
+  if (contract.positional !== undefined) {
+    const wrap = contract.positional.required ? '<' : '[<'
+    const close = contract.positional.required ? '>' : '>]'
+    usageParts.push(`${wrap}${contract.positional.name}${close}`)
+  }
+  if (Object.keys(contract.options).length > 0) {
+    usageParts.push('[options]')
+  }
+  lines.push(`Usage: sudoku-cli ${usageParts.join(' ')}`)
+
+  if (contract.description !== undefined) {
+    lines.push('')
+    lines.push(contract.description)
+  }
+
+  const userOptions = Object.entries(contract.options).filter(([n]) => n !== 'help')
+  if (userOptions.length > 0) {
+    lines.push('')
+    lines.push('Options:')
+    for (const [optName, optDef] of userOptions) {
+      const placeholder = getOptionPlaceholder(optName, optDef)
+      const valueSuffix = optDef.type === 'string' && placeholder !== undefined ? ` ${placeholder}` : ''
+      const longFlag = `--${optName}${valueSuffix}`
+      const padded = padEnd(longFlag, 24)
+      lines.push(`  ${padded}${optDef.desc}`)
+    }
+  }
+
+  const helpOpt = contract.options.help
+  if (helpOpt !== undefined && helpOpt.short !== undefined) {
+    lines.push(`  ${padEnd(`-${helpOpt.short}, --help`, 24)}${helpOpt.desc}`)
+  }
+
+  if (contract.footer !== undefined) {
+    lines.push('')
+    lines.push(contract.footer)
+  }
+
+  return lines.join('\n') + '\n'
+}
 
 /**
  * Parses the process argv vector (excluding `node` and script path).
@@ -58,152 +154,52 @@ Run 'sudoku-cli <command> --help' for command-specific help.
  *
  * @example
  * parseArgs(['new', '--difficulty', 'hard'])
- * // { kind: 'new', difficulty: 'hard', pretty: false }
+ * // { kind: 'cmd', command: 'new', args: { difficulty: 'hard', pretty: false } }
+ *
+ * @example
+ * parseArgs(['--help'])
+ * // { kind: 'top_help' }
  */
 export function parseArgs(argv: readonly string[]): ParsedArgs {
-  const subcommand = argv[0]
+  const name = argv[0]
 
-  if (subcommand === undefined || subcommand === '--help' || subcommand === '-h') {
-    return { kind: 'help' }
+  if (name === undefined || name === '--help' || name === '-h') {
+    return { kind: 'top_help' }
   }
 
-  if (subcommand === '--version' || subcommand === '-v') {
+  if (name === '--version' || name === '-v') {
     return { kind: 'error', message: 'handled by bin wrapper' }
   }
 
-  switch (subcommand) {
-    case 'new': return parseNewArgs(argv.slice(1))
-    case 'solve': return parseBoardArg('solve', argv.slice(1))
-    case 'validate': return parseBoardArg('validate', argv.slice(1))
-    case 'hint': return parseBoardArg('hint', argv.slice(1))
-    case 'play': return parsePlayArgs(argv.slice(1))
-    default:
-      return { kind: 'error', message: `Unknown command: '${subcommand}'. Run 'sudoku-cli --help'.` }
+  const contract = commandsByName.get(name)
+  if (contract === undefined) {
+    return { kind: 'error', message: `Unknown command: '${name}'. Run 'sudoku-cli --help'.` }
   }
+
+  const result = contract.parse(argv.slice(1))
+
+  if (result.ok === 'help') {
+    return {
+      kind: 'cmd_help',
+      command: name as CommandName,
+      helpText: renderCommandHelp(contract),
+    }
+  }
+
+  if (!result.ok) {
+    return { kind: 'error', message: result.message }
+  }
+
+  return { kind: 'cmd', command: name as CommandName, args: result.args }
 }
 
-function parseNewArgs(rest: readonly string[]): ParsedArgs {
-  let parsed: ReturnType<typeof parseUtilArgs>
+/** Top-level usage text, printed for `--help` and on error. */
+export const HELP_TEXT: string = renderTopHelp(commands)
 
-  try {
-    parsed = parseUtilArgs({
-      args: [...rest],
-      options: {
-        difficulty: { type: 'string' },
-        pretty: { type: 'boolean' },
-        help: { type: 'boolean', short: 'h' },
-      },
-      allowPositionals: true,
-      strict: true,
-    })
-  } catch (cause) {
-    return { kind: 'error', message: errorMessage(cause) }
-  }
+/** Per-command help text, keyed by command name. */
+export const HELP_TEXT_BY_NAME: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(commands.map((c) => [c.name, renderCommandHelp(c)])),
+)
 
-  if (parsed.values.help === true) {
-    return { kind: 'help' }
-  }
-
-  return {
-    kind: 'new',
-    difficulty: typeof parsed.values.difficulty === 'string' ? parsed.values.difficulty : undefined,
-    pretty: parsed.values.pretty === true,
-  }
-}
-
-function parseBoardArg(
-  command: 'solve' | 'validate' | 'hint',
-  rest: readonly string[],
-): ParsedArgs {
-  let parsed: ReturnType<typeof parseUtilArgs>
-
-  try {
-    parsed = parseUtilArgs({
-      args: [...rest],
-      options: {
-        help: { type: 'boolean', short: 'h' },
-      },
-      allowPositionals: true,
-      strict: true,
-    })
-  } catch (cause) {
-    return { kind: 'error', message: errorMessage(cause) }
-  }
-
-  if (parsed.values.help === true) {
-    return { kind: 'help' }
-  }
-
-  const positional = parsed.positionals[0]
-
-  if (positional === undefined) {
-    return { kind: 'error', message: `'${command}' requires a board string argument.` }
-  }
-
-  return { kind: command, board: positional }
-}
-
-function errorMessage(cause: unknown): string {
-  const msg = cause instanceof Error ? cause.message : String(cause)
-
-  if (msg.includes('argument missing')) {
-    return `${msg}. Run 'sudoku-cli --help'.`
-  }
-
-  return `Invalid arguments: ${msg}. Run 'sudoku-cli --help'.`
-}
-
-/**
- * Parses the `play` subcommand arguments.
- *
- * @param rest - argv after the `play` subcommand.
- * @returns A {@link ParsedArgs} with play-specific options.
- */
-function parsePlayArgs(rest: readonly string[]): ParsedArgs {
-  let parsed: ReturnType<typeof parseUtilArgs>
-
-  try {
-    parsed = parseUtilArgs({
-      args: [...rest],
-      options: {
-        difficulty: { type: 'string' },
-        load: { type: 'string' },
-        resume: { type: 'boolean' },
-        stats: { type: 'boolean' },
-        achievements: { type: 'boolean' },
-        leaderboard: { type: 'boolean' },
-        help: { type: 'boolean', short: 'h' },
-      },
-      allowPositionals: true,
-      strict: true,
-    })
-  } catch (cause) {
-    return { kind: 'error', message: errorMessage(cause) }
-  }
-
-  if (parsed.values.help === true) {
-    return { kind: 'help' }
-  }
-
-  // Determine play mode
-  let kind: PlayArgs['kind'] = 'play_tui'
-
-  if (parsed.values.stats === true) {
-    kind = 'play_stats'
-  } else if (parsed.values.achievements === true) {
-    kind = 'play_achievements'
-  } else if (parsed.values.leaderboard === true) {
-    kind = 'play_leaderboard'
-  }
-
-  return {
-    kind: 'play',
-    playArgs: {
-      kind,
-      difficulty: typeof parsed.values.difficulty === 'string' ? parsed.values.difficulty : undefined,
-      load: typeof parsed.values.load === 'string' ? parsed.values.load : undefined,
-      resumeLast: parsed.values.resume === true,
-      help: !!parsed.values.help,
-    },
-  }
-}
+/** @deprecated Use {@link HELP_TEXT_BY_NAME} `['play']` instead. */
+export const HELP_TEXT_PLAY: string = HELP_TEXT_BY_NAME['play'] ?? ''

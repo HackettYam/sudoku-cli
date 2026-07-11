@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validateCommand } from '../../commands/validate.js'
+import { validateCommand, validateContract } from '../../commands/validate.js'
 
 const VALID = '123456789456789123789123456234567891567891234891234567345678912678912345912345678'
 
@@ -29,5 +29,35 @@ describe('validateCommand', () => {
     if (result.kind === 'parse_error') {
       expect(result.reason).toContain('Board string must be exactly')
     }
+  })
+})
+
+describe('validateContract', () => {
+  describe('parse', () => {
+    it('returns help on -h', () => {
+      expect(validateContract.parse(['-h'])).toEqual({ ok: 'help' })
+    })
+    it('returns help on --help', () => {
+      expect(validateContract.parse(['--help'])).toEqual({ ok: 'help' })
+    })
+    it('parses a board', () => {
+      const r = validateContract.parse([VALID])
+      expect(r).toEqual({ ok: true, args: { board: VALID } })
+    })
+    it('returns error on unknown option', () => {
+      const r = validateContract.parse(['--frobnicate'])
+      expect(r).toEqual({ ok: false, message: expect.stringContaining('Unknown option') })
+    })
+    it('returns error when board missing', () => {
+      const r = validateContract.parse([])
+      expect(r).toEqual({ ok: false, message: "'validate' requires a board string argument." })
+    })
+  })
+
+  describe('run', () => {
+    it('delegates to validateCommand and returns a valid result', async () => {
+      const result = await validateContract.run({ board: VALID } as never, {} as never)
+      expect(result).toEqual({ kind: 'valid' })
+    })
   })
 })

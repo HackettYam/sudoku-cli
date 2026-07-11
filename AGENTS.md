@@ -19,7 +19,7 @@
 pnpm install
 pnpm typecheck     # tsc --noEmit
 pnpm lint
-pnpm test          # 60 tests
+pnpm test          # 516 tests
 pnpm test:coverage # 100% lines/statements/functions required
 pnpm build         # tsc (types) + esbuild (bundled bin)
 node dist/cli.js new --difficulty easy   # smoke test the published bin
@@ -31,22 +31,36 @@ node dist/cli.js new --difficulty easy   # smoke test the published bin
 
 ```
 src/
-├── cli.ts            # bin dispatcher; entry point for `node dist/cli.js`
+├── cli.ts            # registry-driven dispatcher; entry point for `node dist/cli.js`
 ├── index.ts          # programmatic API surface (re-exports run + commands)
 ├── output.ts         # ONLY module allowed to write to stdout/stderr/exit
-├── args.ts           # argv parser (util.parseArgs) + HELP_TEXT
+├── args.ts           # registry-driven argv parser (util.parseArgs) + auto-rendered HELP_TEXT
 ├── commands/         # pure functions; return CommandResult, no I/O
 │   ├── new.ts        #   createSudoku() → serialize
 │   ├── solve.ts      #   solvePuzzle(board)
 │   ├── validate.ts   #   isValidPuzzle(board)
 │   ├── hint.ts       #   solvePuzzle + getHint (always re-solves)
-│   └── result.ts     #   CommandResult discriminated union + ExitCode
+│   ├── result.ts     #   CommandResult discriminated union + ExitCode
+│   ├── contract.ts   #   CommandContract<A> type + ParseResult / CommandContext
+│   └── index.ts      #   `commands` registry (single source of truth) + CommandName lookup
 └── format/           # pure formatters, depend on the library
     ├── board-string.ts   # parse/normalize 81-char input
     ├── grid.ts           # 9x9 ASCII renderer
     ├── difficulty.ts     # CLI flag → Difficulty enum
     └── constants.ts      # BOARD_LENGTH = 81
 ```
+
+The dispatch surface is data-driven: each `commands/<name>.ts` exports a `CommandContract<…>` singleton; the `commands` array in `src/commands/index.ts` is the single source of truth. Adding a 6th command is a 2-file change (new `commands/<n>.ts` + one entry in the registry). `args.ts` and `cli.ts` are not edited.
+
+### CLI subcommands
+
+| Name | Contract file | Summary |
+|------|---------------|---------|
+| `new` | `src/commands/new.ts` | Generate a new puzzle |
+| `solve` | `src/commands/solve.ts` | Solve a puzzle from an 81-char board |
+| `validate` | `src/commands/validate.ts` | Check whether a board follows Sudoku rules |
+| `hint` | `src/commands/hint.ts` | Suggest the next move (always re-solves internally) |
+| `play` | `src/commands/play-contract.ts` | Interactive TUI game with persistence, stats, achievements, leaderboard |
 
 **Hard rule:** only `src/output.ts` touches `process.stdout/stderr/exit`. All other modules return values; `src/cli.ts` is the single place that translates results to I/O.
 

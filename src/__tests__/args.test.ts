@@ -1,323 +1,213 @@
 import { describe, expect, it } from 'vitest'
-import { parseArgs, HELP_TEXT } from '../args.js'
+import { parseArgs, HELP_TEXT, HELP_TEXT_BY_NAME } from '../args.js'
+
+const BOARD = '1'.repeat(81)
 
 describe('parseArgs', () => {
   describe('top-level', () => {
-    it('returns help when no args are given', () => {
-      expect(parseArgs([])).toEqual({ kind: 'help' })
+    it.each([
+      { argv: [], desc: 'no args' },
+      { argv: ['--help'], desc: '--help' },
+      { argv: ['-h'], desc: '-h' },
+    ])('returns top_help on $desc', ({ argv }) => {
+      expect(parseArgs(argv)).toEqual({ kind: 'top_help' })
     })
 
-    it('returns help on --help', () => {
-      expect(parseArgs(['--help'])).toEqual({ kind: 'help' })
-    })
-
-    it('returns help on -h', () => {
-      expect(parseArgs(['-h'])).toEqual({ kind: 'help' })
-    })
-
-    it('returns error on --version (handled in cli.ts)', () => {
-      expect(parseArgs(['--version'])).toEqual({ kind: 'error', message: 'handled by bin wrapper' })
-    })
-
-    it('returns error on -v (handled in cli.ts)', () => {
-      expect(parseArgs(['-v'])).toEqual({ kind: 'error', message: 'handled by bin wrapper' })
+    it.each([
+      { argv: ['--version'], desc: '--version' },
+      { argv: ['-v'], desc: '-v' },
+    ])('returns error (handled by bin wrapper) on $desc', ({ argv }) => {
+      expect(parseArgs(argv)).toEqual({ kind: 'error', message: 'handled by bin wrapper' })
     })
 
     it('returns error on unknown subcommand', () => {
-      const result = parseArgs(['frobnicate'])
-
-      expect(result.kind).toBe('error')
-
-      if (result.kind === 'error') {
-        expect(result.message).toContain('Unknown command: \'frobnicate\'')
-      }
+      expect(parseArgs(['frobnicate'])).toEqual({
+        kind: 'error',
+        message: "Unknown command: 'frobnicate'. Run 'sudoku-cli --help'.",
+      })
     })
   })
 
   describe('new', () => {
     it('parses --difficulty', () => {
       expect(parseArgs(['new', '--difficulty', 'hard'])).toEqual({
-        kind: 'new',
-        difficulty: 'hard',
-        pretty: false,
+        kind: 'cmd',
+        command: 'new',
+        args: { difficulty: 'hard', pretty: false },
       })
     })
 
     it('parses --pretty', () => {
       expect(parseArgs(['new', '--pretty'])).toEqual({
-        kind: 'new',
-        difficulty: undefined,
-        pretty: true,
+        kind: 'cmd',
+        command: 'new',
+        args: { difficulty: undefined, pretty: true },
       })
     })
 
-    it('returns help on -h after new', () => {
-      expect(parseArgs(['new', '-h'])).toEqual({ kind: 'help' })
+    it('returns cmd_help on -h', () => {
+      expect(parseArgs(['new', '-h'])).toEqual({
+        kind: 'cmd_help',
+        command: 'new',
+        helpText: HELP_TEXT_BY_NAME['new'],
+      })
     })
 
-    it('returns error on unknown option', () => {
-      const result = parseArgs(['new', '--frobnicate'])
+    it.each([
+      { argv: ['new', '--frobnicate'], desc: 'unknown option' },
+      { argv: ['new', '--difficulty'], desc: 'missing --difficulty value' },
+    ])('returns error on $desc', ({ argv }) => {
+      const result = parseArgs(argv)
 
       expect(result.kind).toBe('error')
 
       if (result.kind === 'error') {
-        expect(result.message).toContain('Unknown option')
+        expect(result.message).toMatch(/Unknown option|argument missing/)
       }
     })
+  })
 
-    it('returns error on missing argument value', () => {
-      const result = parseArgs(['new', '--difficulty'])
+  describe.each([
+    { cmd: 'solve', missingMsg: "'solve' requires a board string argument." },
+    { cmd: 'validate', missingMsg: "'validate' requires a board string argument." },
+    { cmd: 'hint', missingMsg: "'hint' requires a board string argument." },
+  ])('$cmd', ({ cmd, missingMsg }) => {
+    it('parses board positional', () => {
+      expect(parseArgs([cmd, BOARD])).toEqual({
+        kind: 'cmd',
+        command: cmd,
+        args: { board: BOARD },
+      })
+    })
 
-      expect(result.kind).toBe('error')
+    it('returns cmd_help on -h', () => {
+      expect(parseArgs([cmd, '-h'])).toEqual({
+        kind: 'cmd_help',
+        command: cmd,
+        helpText: HELP_TEXT_BY_NAME[cmd],
+      })
+    })
 
-      if (result.kind === 'error') {
-        expect(result.message).toContain('argument missing')
-      }
+    it('returns error when board is missing', () => {
+      expect(parseArgs([cmd])).toEqual({ kind: 'error', message: missingMsg })
     })
   })
 
   describe('solve', () => {
-    it('parses board positional', () => {
-      const board = '1'.repeat(81)
-
-      expect(parseArgs(['solve', board])).toEqual({ kind: 'solve', board })
-    })
-
-    it('returns help on -h', () => {
-      expect(parseArgs(['solve', '-h'])).toEqual({ kind: 'help' })
-    })
-
-    it('returns error when board is missing', () => {
-      const result = parseArgs(['solve'])
-
-      expect(result.kind).toBe('error')
-
-      if (result.kind === 'error') {
-        expect(result.message).toContain("'solve' requires a board string argument")
-      }
-    })
-
     it('returns error on unknown option', () => {
-      const result = parseArgs(['solve', '1'.repeat(81), '--frobnicate'])
+      const result = parseArgs(['solve', BOARD, '--frobnicate'])
 
       expect(result.kind).toBe('error')
 
       if (result.kind === 'error') {
         expect(result.message).toContain('Unknown option')
       }
-    })
-  })
-
-  describe('validate', () => {
-    it('parses board positional', () => {
-      const board = '1'.repeat(81)
-
-      expect(parseArgs(['validate', board])).toEqual({ kind: 'validate', board })
-    })
-
-    it('returns error when board is missing', () => {
-      const result = parseArgs(['validate'])
-
-      expect(result.kind).toBe('error')
-
-      if (result.kind === 'error') {
-        expect(result.message).toContain("'validate' requires a board string argument")
-      }
-    })
-  })
-
-  describe('hint', () => {
-    it('parses board positional', () => {
-      const board = '1'.repeat(81)
-
-      expect(parseArgs(['hint', board])).toEqual({ kind: 'hint', board })
-    })
-
-    it('returns error when board is missing', () => {
-      const result = parseArgs(['hint'])
-
-      expect(result.kind).toBe('error')
-
-      if (result.kind === 'error') {
-        expect(result.message).toContain("'hint' requires a board string argument")
-      }
-    })
-
-    it('returns generic error for non-missing/unknown-option failures', () => {
-      // Force an unknown error path by passing a non-string for an option-less command
-      // The error here is a missing argument, so it falls into the "Missing argument" branch
-      const result = parseArgs(['hint'])
-
-      expect(result.kind).toBe('error')
     })
   })
 
   describe('play', () => {
     it('returns play_tui with no args', () => {
-      const result = parseArgs(['play'])
-
-      expect(result).toEqual({
-        kind: 'play',
-        playArgs: {
-          kind: 'play_tui',
-          difficulty: undefined,
-          load: undefined,
-          resumeLast: false,
-          help: false,
-        },
+      expect(parseArgs(['play'])).toEqual({
+        kind: 'cmd',
+        command: 'play',
+        args: { kind: 'play_tui', resumeLast: false, help: false },
       })
     })
 
     it('parses --difficulty', () => {
-      const result = parseArgs(['play', '--difficulty', 'hard'])
-
-      expect(result).toEqual({
-        kind: 'play',
-        playArgs: {
-          kind: 'play_tui',
-          difficulty: 'hard',
-          load: undefined,
-          resumeLast: false,
-          help: false,
-        },
+      expect(parseArgs(['play', '--difficulty', 'hard'])).toEqual({
+        kind: 'cmd',
+        command: 'play',
+        args: { kind: 'play_tui', difficulty: 'hard', resumeLast: false, help: false },
       })
     })
 
     it('parses --load', () => {
-      const result = parseArgs(['play', '--load', 'puzzle-42'])
-
-      expect(result).toEqual({
-        kind: 'play',
-        playArgs: {
-          kind: 'play_tui',
-          difficulty: undefined,
-          load: 'puzzle-42',
-          resumeLast: false,
-          help: false,
-        },
+      expect(parseArgs(['play', '--load', 'puzzle-42'])).toEqual({
+        kind: 'cmd',
+        command: 'play',
+        args: { kind: 'play_tui', load: 'puzzle-42', resumeLast: false, help: false },
       })
     })
 
     it('parses --resume', () => {
-      const result = parseArgs(['play', '--resume'])
-
-      expect(result).toEqual({
-        kind: 'play',
-        playArgs: {
-          kind: 'play_tui',
-          difficulty: undefined,
-          load: undefined,
-          resumeLast: true,
-          help: false,
-        },
+      expect(parseArgs(['play', '--resume'])).toEqual({
+        kind: 'cmd',
+        command: 'play',
+        args: { kind: 'play_tui', resumeLast: true, help: false },
       })
     })
 
-    it('parses --stats as play_stats mode', () => {
-      const result = parseArgs(['play', '--stats'])
-
-      expect(result).toEqual({
-        kind: 'play',
-        playArgs: {
-          kind: 'play_stats',
-          difficulty: undefined,
-          load: undefined,
-          resumeLast: false,
-          help: false,
-        },
+    it.each([
+      { argv: ['play', '--stats'], kind: 'play_stats' },
+      { argv: ['play', '--achievements'], kind: 'play_achievements' },
+      { argv: ['play', '--leaderboard'], kind: 'play_leaderboard' },
+    ])('parses $argv[1] as $kind mode', ({ argv, kind }) => {
+      expect(parseArgs(argv)).toEqual({
+        kind: 'cmd',
+        command: 'play',
+        args: { kind, resumeLast: false, help: false },
       })
     })
 
-    it('parses --achievements as play_achievements mode', () => {
-      const result = parseArgs(['play', '--achievements'])
-
-      expect(result).toEqual({
-        kind: 'play',
-        playArgs: {
-          kind: 'play_achievements',
-          difficulty: undefined,
-          load: undefined,
-          resumeLast: false,
-          help: false,
-        },
+    it.each([
+      { argv: ['play', '--help'] },
+      { argv: ['play', '-h'] },
+    ])('returns cmd_help on $argv[1]', ({ argv }) => {
+      expect(parseArgs(argv)).toEqual({
+        kind: 'cmd_help',
+        command: 'play',
+        helpText: HELP_TEXT_BY_NAME['play'],
       })
     })
 
-    it('parses --leaderboard as play_leaderboard mode', () => {
-      const result = parseArgs(['play', '--leaderboard'])
-
-      expect(result).toEqual({
-        kind: 'play',
-        playArgs: {
-          kind: 'play_leaderboard',
-          difficulty: undefined,
-          load: undefined,
-          resumeLast: false,
-          help: false,
-        },
-      })
-    })
-
-    it('returns help on --help', () => {
-      expect(parseArgs(['play', '--help'])).toEqual({ kind: 'help' })
-    })
-
-    it('returns help on -h', () => {
-      expect(parseArgs(['play', '-h'])).toEqual({ kind: 'help' })
-    })
-
-    it('returns error on unknown option', () => {
-      const result = parseArgs(['play', '--frobnicate'])
+    it.each([
+      { argv: ['play', '--frobnicate'] },
+      { argv: ['play', '--difficulty'] },
+    ])('returns error on $argv[1]', ({ argv }) => {
+      const result = parseArgs(argv)
 
       expect(result.kind).toBe('error')
 
       if (result.kind === 'error') {
-        expect(result.message).toContain('Unknown option')
-      }
-    })
-
-    it('returns error on missing argument value', () => {
-      const result = parseArgs(['play', '--difficulty'])
-
-      expect(result.kind).toBe('error')
-
-      if (result.kind === 'error') {
-        expect(result.message).toContain('argument missing')
+        expect(result.message).toMatch(/Unknown option|argument missing/)
       }
     })
 
     it('combines --stats with --difficulty', () => {
-      const result = parseArgs(['play', '--stats', '--difficulty', 'expert'])
-
-      expect(result).toEqual({
-        kind: 'play',
-        playArgs: {
-          kind: 'play_stats',
-          difficulty: 'expert',
-          load: undefined,
-          resumeLast: false,
-          help: false,
-        },
+      expect(parseArgs(['play', '--stats', '--difficulty', 'expert'])).toEqual({
+        kind: 'cmd',
+        command: 'play',
+        args: { kind: 'play_stats', difficulty: 'expert', resumeLast: false, help: false },
       })
     })
 
     it('prioritizes --stats over --achievements when both given', () => {
-      const result = parseArgs(['play', '--stats', '--achievements'])
-
-      expect(result).toEqual({
-        kind: 'play',
-        playArgs: {
-          kind: 'play_stats',
-          difficulty: undefined,
-          load: undefined,
-          resumeLast: false,
-          help: false,
-        },
+      expect(parseArgs(['play', '--stats', '--achievements'])).toEqual({
+        kind: 'cmd',
+        command: 'play',
+        args: { kind: 'play_stats', resumeLast: false, help: false },
       })
     })
   })
+})
 
-  it('exposes HELP_TEXT for cli.ts', () => {
-    expect(HELP_TEXT).toContain('Usage: sudoku-cli')
+describe('HELP_TEXT content', () => {
+  it('starts with the usage line', () => {
+    expect(HELP_TEXT.startsWith('Usage: sudoku-cli <command> [options]')).toBe(true)
+  })
+
+  it('lists all five subcommands', () => {
+    for (const cmd of ['new ', 'solve ', 'validate ', 'hint ', 'play ']) {
+      expect(HELP_TEXT).toContain(cmd)
+    }
+  })
+
+  it('mentions difficulty levels', () => {
+    expect(HELP_TEXT).toContain('Difficulty levels: novice, easy, normal, hard, expert (default: normal)')
+  })
+
+  it('ends with a help hint', () => {
+    expect(HELP_TEXT).toContain("Run 'sudoku-cli <command> --help' for command-specific help.")
   })
 })

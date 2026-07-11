@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { solveCommand } from '../../commands/solve.js'
+import { solveCommand, solveContract } from '../../commands/solve.js'
 import { isValidPuzzle } from '@hackettyam/sudoku-tools'
 
 // A valid 81-char board with a known solution (rows 0,1,2,...8 of a Latin square).
@@ -49,5 +49,39 @@ describe('solveCommand', () => {
     if (result.kind === 'parse_error') {
       expect(result.reason).toContain('Board string must be exactly')
     }
+  })
+})
+
+describe('solveContract', () => {
+  describe('parse', () => {
+    it('returns help on -h', () => {
+      expect(solveContract.parse(['-h'])).toEqual({ ok: 'help' })
+    })
+    it('returns help on --help', () => {
+      expect(solveContract.parse(['--help'])).toEqual({ ok: 'help' })
+    })
+    it('parses a board', () => {
+      const r = solveContract.parse([VALID])
+      expect(r).toEqual({ ok: true, args: { board: VALID } })
+    })
+    it('returns error on unknown option', () => {
+      const r = solveContract.parse(['--frobnicate'])
+      expect(r).toEqual({ ok: false, message: expect.stringContaining('Unknown option') })
+    })
+    it('returns error when board missing', () => {
+      const r = solveContract.parse([])
+      expect(r).toEqual({ ok: false, message: "'solve' requires a board string argument." })
+    })
+  })
+
+  describe('run', () => {
+    it('delegates to solveCommand and returns a solved result', async () => {
+      const result = await solveContract.run({ board: VALID } as never, {} as never)
+      expect(result.kind).toBe('solved')
+      if (result.kind === 'solved') {
+        expect(result.serialized).toHaveLength(81)
+        expect(result.serialized).toMatch(/^[1-9]{81}$/)
+      }
+    })
   })
 })

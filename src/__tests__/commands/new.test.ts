@@ -1,8 +1,53 @@
-import { describe, expect, it } from 'vitest'
-import { newCommand } from '../../commands/new.js'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { newCommand, newContract } from '../../commands/new.js'
+import type * as NewModule from '../../commands/new.js'
+import type { CommandContext } from '../../commands/contract.js'
 import { isValidPuzzle } from '@hackettyam/sudoku-tools'
 
+// vi.mock is hoisted above the imports by vitest. We keep every named export
+// intact except for two precise re-bindings:
+//   1. `newCommand` is wrapped in a `vi.fn` so direct-call tests can stub it
+//      via `vi.mocked(newCommand).mockReturnValue(...)`.
+//   2. `newContract.run` is replaced with a thin closure that invokes the
+//      wrapped `newCommand` using the same argument-shape mapping the real
+//      `newContract.run` uses (forwards `difficulty` only when defined).
+//
+// The real `newContract.run` closure-captures the module-scope `newCommand`
+// reference, so wrapping `newCommand` alone is not sufficient — the `run`
+// override must call the wrapped `vi.fn` explicitly so that
+// `vi.mocked(newCommand).mockReturnValue(...)` actually takes effect inside
+// the `newContract.run` tests below.
+//
+// `vi.spyOn` cannot replace a named export in an ESM namespace import (the
+// namespace object is a read-only view of the live module record), so we use
+// the `vi.mock` factory pattern here. The hoisted factory runs at module
+// resolution time, before the test file body executes.
+vi.mock('../../commands/new.js', async (importOriginal) => {
+  const mod = (await importOriginal()) as typeof NewModule
+  const wrapped = vi.fn(mod.newCommand)
+  return {
+    ...mod,
+    newCommand: wrapped,
+    newContract: {
+      ...mod.newContract,
+      async run(args: NewModule.NewArgs, _ctx: CommandContext) {
+        const opts = args.difficulty !== undefined ? { difficulty: args.difficulty } : {}
+        return Promise.resolve(wrapped(opts))
+      },
+    },
+  }
+})
+
 describe('newCommand', () => {
+  beforeEach(() => {
+    // Clear the wrapped `newCommand`'s call history between tests without
+    // dropping the implementation. (We use `mockClear`, not `mockReset`,
+    // because `mockReset` would replace the wrapper's implementation with
+    // `() => undefined`, breaking the direct-call tests below which rely on
+    // the real `newCommand` behavior.)
+    vi.mocked(newCommand).mockClear()
+  })
+
   it('returns a parse_error on an unknown difficulty', () => {
     const result = newCommand({ difficulty: 'insane' })
 
@@ -68,6 +113,98 @@ describe('newCommand', () => {
       rows.forEach((r) => expect(r).toHaveLength(9))
       // Note: the puzzle itself is not solved, so isValidPuzzle is not asserted here.
       void isValidPuzzle
+    }
+  })
+})
+
+describe('newContract', () => {
+  describe('parse', () => {
+    it('returns help on --help', () => {
+      expect(newContract.parse(['--help'])).toEqual({ ok: 'help' })
+    })
+    it('returns help on -h', () => {
+      expect(newContract.parse(['-h'])).toEqual({ ok: 'help' })
+    })
+    it('parses --difficulty', () => {
+      const r = newContract.parse(['--difficulty', 'easy'])
+      expect(r).toEqual({ ok: true, args: { difficulty: 'easy', pretty: false } })
+    })
+    it('parses --pretty', () => {
+      const r = newContract.parse(['--pretty'])
+      expect(r).toEqual({ ok: true, args: { difficulty: undefined, pretty: true } })
+    })
+    it('defaults both fields when no args', () => {
+      const r = newContract.parse([])
+      expect(r).toEqual({ ok: true, args: { difficulty: undefined, pretty: false } })
+    })
+    it('returns error on unknown option', () => {
+      const r = newContract.parse(['--frobnicate'])
+      expect(r).toEqual({ ok: false, message: expect.stringContaining('Unknown option') })
+    })
+  })
+
+  describe('run', () => {
+    beforeEach(() => {
+      // `mockReset` (not `mockRestore`) keeps the wrapper in place but
+      // drops any preset return value, so each test gets a clean slate.
+      vi.mocked(newCommand).mockReset()
+    })
+
+    it('delegates to newCommand and returns the result', async () => {
+      vi.mocked(newCommand).mockReturnValue({
+        kind: 'new',
+        serialized: '1'.repeat(81),
+        difficultyName: 'easy',
+      })
+
+      const result = await newContract.run({ pretty: false } as never, {} as never)
+      // `newContract.run` calls `newCommand({})` when no difficulty is provided.
+      expect(newCommand).toHaveBeenCalledWith({})
+      expect(result).toEqual({
+        kind: 'new',
+        serialized: '1'.repeat(81),
+        difficultyName: 'easy',
+      })
+    })
+
+    it('passes difficulty to newCommand when provided', async () => {
+      vi.mocked(newCommand).mockReturnValue({
+        kind: 'new',
+        serialized: '1'.repeat(81),
+        difficultyName: 'hard',
+      })
+
+      const result = await newContract.run(
+        { difficulty: 'hard', pretty: false } as never,
+        {} as never,
+      )
+      expect(newCommand).toHaveBeenCalledWith({ difficulty: 'hard' })
+      expect(result).toEqual({
+        kind: 'new',
+        serialized: '1'.repeat(81),
+        difficultyName: 'hard',
+      })
+    })
+  })
+
+  // The `vi.mock` factory above replaces `newContract.run` with a thin stub,
+  // so the real `newContract.run` in `src/commands/new.ts` would otherwise be
+  // uncovered. This test bypasses the mock with `vi.importActual` and
+  // exercises the real implementation end-to-end against the real
+  // `newCommand` (which is unaffected by `mockReset` because it is a fresh
+  // function obtained from the un-mocked module).
+  it('real newContract.run invokes the real newCommand end-to-end', async () => {
+    const actual = await vi.importActual<typeof NewModule>('../../commands/new.js')
+    const result = await actual.newContract.run(
+      { difficulty: 'easy', pretty: false },
+      {} as never,
+    )
+
+    expect(result.kind).toBe('new')
+
+    if (result.kind === 'new') {
+      expect(result.difficultyName).toBe('easy')
+      expect(result.serialized).toMatch(/^[0-9]{81}$/)
     }
   })
 })

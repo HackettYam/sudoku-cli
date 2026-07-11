@@ -1,5 +1,8 @@
+import { parseArgs as parseUtilArgs } from 'node:util'
 import { isValidPuzzle } from '@hackettyam/sudoku-tools'
 import { parseBoard } from '../format/board-string.js'
+import { errorMessage } from './_error-message.js'
+import type { CommandContract, CommandContext, ParseResult } from './contract.js'
 import type { CommandResult } from './result.js'
 
 /**
@@ -32,4 +35,62 @@ export function validateCommand(input: string): CommandResult {
   }
 
   return { kind: 'invalid', reason: 'Board violates Sudoku rules (duplicate digit in a row, column, or 3x3 box).' }
+}
+
+/**
+ * Parsed args shape for the `validate` contract.
+ *
+ * The single positional `board` is an 81-char digit string; whitespace is
+ * stripped by `parseBoard` inside `validateCommand`.
+ */
+export interface ValidateArgs {
+  readonly board: string
+}
+
+/**
+ * Contract for the `validate` subcommand.
+ *
+ * Accepts exactly one positional (the 81-char board string) and no
+ * options. The `parse` method strips `--help`/`-h` before delegating to
+ * `parseUtilArgs` (configured `strict: true` with `options: {}`); unknown
+ * flags therefore surface as parse errors via `errorMessage`.
+ *
+ * @see requirements.md AC-2
+ * @see design.md Interfaces
+ * @see tasks.md T-004
+ */
+export const validateContract: CommandContract<ValidateArgs> = {
+  name: 'validate',
+  summary: 'Validate a puzzle',
+  options: {},
+  positional: { name: 'board', required: true, desc: '81-char board string' },
+  parse(rest: readonly string[]): ParseResult<ValidateArgs> {
+    if (rest.includes('--help') || rest.includes('-h')) {
+      return { ok: 'help' }
+    }
+
+    let parsed: ReturnType<typeof parseUtilArgs>
+
+    try {
+      parsed = parseUtilArgs({
+        args: [...rest],
+        options: {},
+        allowPositionals: true,
+        strict: true,
+      })
+    } catch (cause) {
+      return { ok: false, message: errorMessage(cause) }
+    }
+
+    const board = parsed.positionals[0]
+
+    if (board === undefined) {
+      return { ok: false, message: "'validate' requires a board string argument." }
+    }
+
+    return { ok: true, args: { board } }
+  },
+  run(args: ValidateArgs, _ctx: CommandContext): Promise<CommandResult> {
+    return Promise.resolve(validateCommand(args.board))
+  },
 }

@@ -4,138 +4,55 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { deserializeBoard } from '@hackettyam/sudoku-tools'
 import { parseArgs, HELP_TEXT } from './args.js'
-import { newCommand } from './commands/new.js'
-import { solveCommand } from './commands/solve.js'
-import { validateCommand } from './commands/validate.js'
-import { hintCommand } from './commands/hint.js'
-import { playCommand } from './commands/play.js'
-import { playStatsCommand } from './commands/play-stats.js'
-import { playAchievementsCommand } from './commands/play-achievements.js'
-import { playLeaderboardCommand } from './commands/play-leaderboard.js'
+import { commandsByName } from './commands/index.js'
+import { defaultPlayIO, defaultPlayPersistence } from './commands/play.js'
 import { renderGrid } from './format/grid.js'
 import { stdout, stderr, exit } from './output.js'
+import type { CommandContext } from './commands/contract.js'
 import type { CommandResult, ExitCodeValue } from './commands/result.js'
 
-/**
- * Reads the package version from the nearest `package.json`.
- *
- * Resolves relative to this file's location so it works both in source
- * (`src/cli.ts` → `../package.json`) and after build (`dist/cli.js` →
- * `../package.json`).
- */
+/** Reads the package version from `package.json` next to this file. */
 function readVersion(): string {
   const here = dirname(fileURLToPath(import.meta.url))
   const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')) as { version?: string }
-
   return typeof pkg.version === 'string' ? pkg.version : 'unknown'
 }
 
-/**
- * Entry point for the CLI. Parses argv, dispatches to the appropriate
- * command, formats output, and returns the desired process exit code.
- *
- * Pure with respect to its arguments: no global state, no `process.exit`
- * calls. The bin wrapper at the bottom of this file is responsible for
- * calling `process.exit` with the returned code.
- *
- * @param argv - Typically `process.argv.slice(2)`.
- * @returns The process exit code (0 for success, non-zero for failure).
- *
- * @example
- * const code = await run(['new', '--difficulty', 'hard'])
- * // → 0, with the puzzle printed to stdout
- */
-export async function run(argv: readonly string[]): Promise<ExitCodeValue> {
-  const args = parseArgs(argv)
-
-  switch (args.kind) {
-    case 'help':
-      stdout(HELP_TEXT)
-      return 0
-    case 'error':
-      stderr(args.message)
-      return 2
-    case 'new':
-      return handleResult(newCommand(args.difficulty !== undefined ? { difficulty: args.difficulty } : {}), args.pretty)
-    case 'solve':
-      return handleResult(solveCommand(args.board), false)
-    case 'validate':
-      return handleResult(validateCommand(args.board), false)
-    case 'hint':
-      return handleResult(hintCommand(args.board), false)
-    case 'play':
-      return handlePlayArgs(args.playArgs)
-  }
-}
-
-import type { PlayArgs } from './args.js'
-
-async function handlePlayArgs(playArgs: PlayArgs): Promise<ExitCodeValue> {
-  switch (playArgs.kind) {
-    case 'play_tui': {
-      const result = await playCommand({
-        difficulty: playArgs.difficulty,
-        loadId: playArgs.load,
-        resumeLast: playArgs.resumeLast,
-      })
-
-      if (result.reason === 'error') {
-        stderr(result.message ?? 'Unknown error')
-        return 2
-      }
-
-      return 0
-    }
-
-    case 'play_stats': {
-      const result = await playStatsCommand()
-      handlePlayLines(result.lines)
-      return 0
-    }
-
-    case 'play_achievements': {
-      const result = await playAchievementsCommand()
-      handlePlayLines(result.lines)
-      return 0
-    }
-
-    case 'play_leaderboard': {
-      const result = await playLeaderboardCommand()
-      handlePlayLines(result.lines)
-      return 0
-    }
+/** Build the shared `CommandContext` (only `play` consumes its deps). */
+function buildContext(): CommandContext {
+  return {
+    io: defaultPlayIO(),
+    persistence: defaultPlayPersistence(),
   }
 }
 
 /**
- * Writes an array of lines to stdout.
+ * Pop the `pretty` flag from a `new` subcommand's parsed args.
  *
- * @param lines - The lines to write.
+ * The `new` contract carries `pretty` in its `NewArgs` shape (a CLI-rendering
+ * concern) but its `run` ignores it. The dispatcher reads the flag here and
+ * passes it to {@link handleResult} after `run` returns, so the contract
+ * stays free of presentation logic.
  */
-function handlePlayLines(lines: readonly string[]): void {
-  for (const line of lines) {
-    stdout(line)
+function extractPretty(args: unknown): { pretty: boolean; rest: unknown } {
+  if (typeof args === 'object' && args !== null && 'pretty' in args) {
+    const obj = args as Record<string, unknown>
+    const { pretty, ...rest } = obj
+    return { pretty: pretty === true, rest }
   }
+  return { pretty: false, rest: args }
 }
 
-/**
- * Routes a {@link CommandResult} to stdout/stderr and the right exit code.
- *
- * @param result - Output of a pure command function.
- * @param pretty - If true, `new` results also print a 9x9 ASCII grid.
- * @returns The process exit code.
- */
+/** Routes a {@link CommandResult} to stdout/stderr and the right exit code. */
 function handleResult(result: CommandResult, pretty: boolean): ExitCodeValue {
   switch (result.kind) {
     case 'new':
       stdout(result.serialized)
-
       if (pretty) {
         stderr('')
         stderr(`Difficulty: ${result.difficultyName}`)
         stderr(renderGrid(deserializeBoard(result.serialized)))
       }
-
       return 0
     case 'solved':
       stdout(result.serialized)
@@ -171,6 +88,47 @@ function handleResult(result: CommandResult, pretty: boolean): ExitCodeValue {
         stdout(line)
       }
       return 0
+  }
+}
+
+/**
+ * CLI entry point. Parses argv, dispatches to the matching command via the
+ * registry, formats output, and returns the desired process exit code.
+ *
+ * @param argv - Typically `process.argv.slice(2)`.
+ * @returns The process exit code (0 for success, non-zero for failure).
+ *
+ * @example
+ * const code = await run(['new', '--difficulty', 'hard'])
+ * // → 0, with the puzzle printed to stdout
+ */
+export async function run(argv: readonly string[]): Promise<ExitCodeValue> {
+  const parsed = parseArgs(argv)
+  const ctx = buildContext()
+
+  switch (parsed.kind) {
+    case 'top_help':
+      stdout(HELP_TEXT)
+      return 0
+    case 'cmd_help':
+      stdout(parsed.helpText)
+      return 0
+    case 'error':
+      stderr(parsed.message)
+      return 2
+    case 'cmd': {
+      const contract = commandsByName.get(parsed.command)
+      if (contract === undefined) {
+        stderr(`Internal error: command '${parsed.command}' not found in registry.`)
+        return 2
+      }
+
+      const { pretty, rest } = parsed.command === 'new'
+        ? extractPretty(parsed.args)
+        : { pretty: false, rest: parsed.args }
+      const result = await contract.run(rest, ctx)
+      return handleResult(result, pretty)
+    }
   }
 }
 

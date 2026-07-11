@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hintCommand } from '../../commands/hint.js'
+import { hintCommand, hintContract } from '../../commands/hint.js'
 
 // A valid solved board (no empty cells) → hint should report no hint available.
 const SOLVED = '123456789456789123789123456234567891567891234891234567345678912678912345912345678'
@@ -48,5 +48,40 @@ describe('hintCommand', () => {
     if (result.kind === 'parse_error') {
       expect(result.reason).toContain('Board string must be exactly')
     }
+  })
+})
+
+describe('hintContract', () => {
+  // A valid fully-solved board — `hintCommand` returns `no_hint` because there
+  // are no empty cells to suggest a value for. (Using `'1'.repeat(81)` would
+  // make the solver return `unsolvable` since the board violates Sudoku rules.)
+  const BOARD = '123456789456789123789123456234567891567891234891234567345678912678912345912345678'
+
+  describe('parse', () => {
+    it('returns help on -h', () => {
+      expect(hintContract.parse(['-h'])).toEqual({ ok: 'help' })
+    })
+    it('returns help on --help', () => {
+      expect(hintContract.parse(['--help'])).toEqual({ ok: 'help' })
+    })
+    it('parses a board', () => {
+      const r = hintContract.parse([BOARD])
+      expect(r).toEqual({ ok: true, args: { board: BOARD } })
+    })
+    it('returns error on unknown option', () => {
+      const r = hintContract.parse(['--frobnicate'])
+      expect(r).toEqual({ ok: false, message: expect.stringContaining('Unknown option') })
+    })
+    it('returns error when board missing', () => {
+      const r = hintContract.parse([])
+      expect(r).toEqual({ ok: false, message: "'hint' requires a board string argument." })
+    })
+  })
+
+  describe('run', () => {
+    it('delegates to hintCommand and returns the result', async () => {
+      const result = await hintContract.run({ board: BOARD } as never, {} as never)
+      expect(result.kind).toBe('no_hint')
+    })
   })
 })
