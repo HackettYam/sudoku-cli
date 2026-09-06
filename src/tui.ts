@@ -1,188 +1,12 @@
 import pc from 'picocolors'
 
-import type { AchievementId } from './persistence/achievements.js'
 import { difficultyToName } from './format/difficulty.js'
 import type { GameState, Move } from './game/state.js'
 import { isReadOnly } from './game/state.js'
+import type { AchievementId } from './persistence/achievements.js'
+import { parseKeypress, type ParsedKey } from './tui-keypress.js'
 
-// ---------------------------------------------------------------------------
-// Part 1: Keypress Parser (T-011)
-// ---------------------------------------------------------------------------
-
-/** Discriminated union of parsed key events. */
-export type ParsedKey =
-  | { readonly kind: 'arrow-up' }
-  | { readonly kind: 'arrow-down' }
-  | { readonly kind: 'arrow-left' }
-  | { readonly kind: 'arrow-right' }
-  | { readonly kind: 'home' }
-  | { readonly kind: 'end' }
-  | { readonly kind: 'ctrl-home' }
-  | { readonly kind: 'ctrl-end' }
-  | { readonly kind: 'digit'; readonly value: number }
-  | { readonly kind: 'backspace' }
-  | { readonly kind: 'delete' }
-  | { readonly kind: 'char'; readonly char: string }
-  | { readonly kind: 'escape' }
-  | { readonly kind: 'ctrl-c' }
-
-/**
- * Parse raw terminal input bytes into structured key events.
- * Handles ANSI CSI sequences. Unknown sequences return [].
- *
- * @param buf - Raw input buffer from stdin.
- * @returns Array of parsed key events (usually 0 or 1).
- *
- * @example
- * ```ts
- * parseKeypress(Buffer.from('\x1b[A')) // [{ kind: 'arrow-up' }]
- * ```
- */
-export function parseKeypress(buf: Buffer): readonly ParsedKey[] {
-  const result: ParsedKey[] = []
-  let i = 0
-
-  while (i < buf.length) {
-    const b = buf[i] as number
-
-    // Ctrl-C
-    if (b === 0x03) {
-      result.push({ kind: 'ctrl-c' })
-      i++
-      continue
-    }
-
-    // Escape sequence start
-    if (b === 0x1b) {
-      const next = buf[i + 1]
-      if (next !== undefined && next === 0x5b) {
-        // CSI sequence: \x1b[
-        const parsed = parseCsiSequence(buf, i + 2)
-        if (parsed.key !== null) {
-          result.push(parsed.key)
-        }
-        i = parsed.nextIndex
-      } else if (i + 1 === buf.length) {
-        // Lone escape
-        result.push({ kind: 'escape' })
-        i++
-      } else {
-        // Unknown escape sequence — skip escape byte
-        i++
-      }
-      continue
-    }
-
-    // Backspace (DEL or BS)
-    if (b === 0x7f || b === 0x08) {
-      result.push({ kind: 'backspace' })
-      i++
-      continue
-    }
-
-    // Digits 1-9
-    if (b >= 0x31 && b <= 0x39) {
-      result.push({ kind: 'digit', value: b - 0x30 })
-      i++
-      continue
-    }
-
-    // Other printable ASCII (space through tilde)
-    if (b >= 0x20 && b <= 0x7e) {
-      result.push({ kind: 'char', char: String.fromCharCode(b) })
-      i++
-      continue
-    }
-
-    // Unknown byte — skip
-    i++
-  }
-
-  return result
-}
-
-interface CsiParseResult {
-  readonly key: ParsedKey | null
-  readonly nextIndex: number
-}
-
-/**
- * Parse a CSI sequence starting after `\x1b[`.
- *
- * @param buf  - Full input buffer.
- * @param from - Index after the `[` byte.
- * @returns The parsed key and next read index.
- */
-function parseCsiSequence(buf: Buffer, from: number): CsiParseResult {
-  let i = from
-  const params: number[] = []
-  let current = ''
-
-  // Collect parameter bytes (digits and semicolons)
-  while (i < buf.length) {
-    const ch = buf[i] as number
-    if (ch >= 0x30 && ch <= 0x3b) {
-      // 0-9 or semicolon
-      if (ch === 0x3b) {
-        params.push(current === '' ? 0 : Number(current))
-        current = ''
-      } else {
-        current += String.fromCharCode(ch)
-      }
-      i++
-    } else {
-      break
-    }
-  }
-
-  if (current !== '') {
-    params.push(Number(current))
-  }
-
-  if (i >= buf.length) {
-    return { key: null, nextIndex: i }
-  }
-
-  const finalByte = buf[i]
-  i++
-
-  switch (finalByte) {
-    case 0x41: return { key: { kind: 'arrow-up' }, nextIndex: i }
-    case 0x42: return { key: { kind: 'arrow-down' }, nextIndex: i }
-    case 0x43: return { key: { kind: 'arrow-right' }, nextIndex: i }
-    case 0x44: return { key: { kind: 'arrow-left' }, nextIndex: i }
-    case 0x48: {
-      // H — Home / Ctrl-Home / Ctrl-End
-      if (params.length === 2 && params[1] === 5) {
-        if (params[0] === 1) return { key: { kind: 'ctrl-home' }, nextIndex: i }
-        if (params[0] === 8) return { key: { kind: 'ctrl-end' }, nextIndex: i }
-      }
-      return { key: { kind: 'home' }, nextIndex: i }
-    }
-    case 0x46: {
-      // F — End / Ctrl-End
-      const isCtrl = params.length === 2 && params[0] === 8 && params[1] === 5
-      return { key: { kind: isCtrl ? 'ctrl-end' : 'end' }, nextIndex: i }
-    }
-    case 0x7e: {
-      // ~ — Tilde sequences
-      if (params[0] === 3) {
-        return { key: { kind: 'delete' }, nextIndex: i }
-      }
-      if (params.length === 2) {
-        if (params[0] === 1 && params[1] === 5) {
-          return { key: { kind: 'ctrl-home' }, nextIndex: i }
-        }
-        if (params[0] === 4 && params[1] === 5) {
-          return { key: { kind: 'ctrl-end' }, nextIndex: i }
-        }
-      }
-      return { key: null, nextIndex: i }
-    }
-    default:
-      return { key: null, nextIndex: i }
-  }
-}
+export { parseKeypress, type ParsedKey }
 
 // ---------------------------------------------------------------------------
 // Part 2: Renderer (T-012)
@@ -194,6 +18,17 @@ export interface RenderOptions {
   readonly colorsEnabled?: boolean
   /** Width for the grid area. Default: 38. */
   readonly width?: number
+}
+
+type TuiColors = ReturnType<typeof pc.createColors>
+
+interface ColorContext {
+  readonly colorsOn: boolean
+  readonly colors: TuiColors
+}
+
+interface GridRenderContext extends ColorContext {
+  readonly cellWidth: 3
 }
 
 /**
@@ -216,7 +51,7 @@ export function formatTime(ms: number): string {
   const s = totalSec % 60
 
   if (h > 0) {
-    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    return `${String(h)}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
   }
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
@@ -272,85 +107,111 @@ export function renderGame(state: GameState, options?: RenderOptions): string {
  * @param options - Rendering options.
  * @returns The grid string.
  */
-function renderGrid(state: GameState, options: { readonly colorsEnabled?: boolean }): string {
-  const colorsOn = options.colorsEnabled ?? false
-  const colors = pc.createColors(colorsOn)
-  const cellWidth = 3
-  const thinH = '─'.repeat(cellWidth)
-  const thickH = '═'.repeat(cellWidth)
+const GRID_BORDERS = {
+  top: '╔═══╤═══╤═══╦═══╤═══╤═══╦═══╤═══╤═══╗',
+  midThin: '╟───┼───┼───╫───┼───┼───╫───┼───┼───╢',
+  midThick: '╠═══╪═══╪═══╬═══╪═══╪═══╬═══╪═══╪═══╣',
+  bottom: '╚═══╧═══╧═══╩═══╧═══╧═══╩═══╧═══╧═══╝',
+} as const
 
-  // Top border: ╔═══╤═══╤═══╦═══╤═══╤═══╦═══╤═══╤═══╗
-  const top = `╔${thickH}╤${thickH}╤${thickH}╦${thickH}╤${thickH}╤${thickH}╦${thickH}╤${thickH}╤${thickH}╗`
+interface GridCellStyle {
+  readonly isClue: boolean
+  readonly isCursor: boolean
+  readonly isCorrect: boolean
+  readonly isError: boolean
+}
 
-  // Thin separator: ╟───┼───┼───╫───┼───┼───╫───┼───┼───╢
-  const midThin = `╟${thinH}┼${thinH}┼${thinH}╫${thinH}┼${thinH}┼${thinH}╫${thinH}┼${thinH}┼${thinH}╢`
+/** Apply the TUI color priority to one already-padded cell. */
+function colorGridCell(display: string, style: GridCellStyle, context: GridRenderContext): string {
+  if (!context.colorsOn) {
+    return display
+  }
+  if (style.isCursor) {
+    return context.colors.inverse(display)
+  }
+  if (style.isError) {
+    return context.colors.red(context.colors.inverse(display))
+  }
+  if (style.isCorrect) {
+    return context.colors.dim(context.colors.cyan(display))
+  }
+  if (style.isClue) {
+    return context.colors.bold(display)
+  }
+  return context.colors.dim(display)
+}
 
-  // Thick separator: ╠═══╪═══╪═══╬═══╪═══╪═══╬═══╪═══╪═══╣
-  const midThick = `╠${thickH}╪${thickH}╪${thickH}╬${thickH}╪${thickH}╪${thickH}╬${thickH}╪${thickH}╪${thickH}╣`
+/** Render one cell, returning undefined for sparse board entries. */
+function renderGridCell(
+  state: GameState,
+  position: readonly [number, number],
+  context: GridRenderContext,
+): string | undefined {
+  const [row, col] = position
+  const value = state.board[row]?.[col]
+  if (value === undefined) {
+    return undefined
+  }
 
-  // Bottom border: ╚═══╧═══╧═══╩═══╧═══╧═══╩═══╧═══╧═══╝
-  const bot = `╚${thickH}╧${thickH}╧${thickH}╩${thickH}╧${thickH}╧${thickH}╩${thickH}╧${thickH}╧${thickH}╝`
+  const isClue = isReadOnly(state, row, col)
+  const isCursor = state.cursor.row === row && state.cursor.col === col
+  const isUserFilled = !isClue && value !== 0
+  const solutionCell = state.solution[row]?.[col]
+  const display = (value === 0 ? '.' : String(value))
+    .padStart(2)
+    .padEnd(context.cellWidth)
 
-  const rows: string[] = [top]
+  return colorGridCell(display, {
+    isClue,
+    isCursor,
+    isCorrect: isUserFilled && value === solutionCell,
+    isError: isUserFilled && value !== solutionCell,
+  }, context)
+}
 
-  for (let r = 0; r < 9; r++) {
-    const cells: string[] = []
-    for (let c = 0; c < 9; c++) {
-      const cell = state.board[r]?.[c]
-      if (cell === undefined) continue
-      const val = cell
-      const isClue = isReadOnly(state, r, c)
-      const isCursor = state.cursor.row === r && state.cursor.col === c
-      const isUserFilled = !isClue && val !== 0
-      const solutionCell = state.solution[r]?.[c]
-      const isCorrect = isUserFilled && val === solutionCell
-      const isError = isUserFilled && val !== solutionCell
+/** Return the correct vertical separator for a cell boundary. */
+function getVerticalSeparator(index: number): string {
+  return index === 2 || index === 5 ? '║' : '│'
+}
 
-      let display: string
-      if (val === 0) {
-        display = '.'
-      } else {
-        display = String(val)
-      }
-
-      display = display.padStart(2).padEnd(cellWidth)
-
-      if (colorsOn) {
-        if (isCursor) {
-          display = colors.inverse(display)
-        } else if (isError) {
-          display = colors.red(colors.inverse(display))
-        } else if (isCorrect) {
-          display = colors.dim(colors.cyan(display))
-        } else if (isClue) {
-          display = colors.bold(display)
-        } else {
-          display = colors.dim(display)
-        }
-      }
-
-      cells.push(display)
-    }
-
-    // Build row with correct vertical separators
-    let row = '║'
-    for (let c = 0; c < cells.length; c++) {
-      row += cells[c]
-      if (c < cells.length - 1) {
-        row += (c === 2 || c === 5) ? '║' : '│'
-      }
-    }
-    row += '║'
-    rows.push(row)
-
-    if (r < 8 && r % 3 !== 2) {
-      rows.push(midThin)
-    } else if (r < 8) {
-      rows.push(midThick)
+/** Render one full grid row with its vertical separators. */
+function renderGridRow(state: GameState, row: number, context: GridRenderContext): string {
+  const cells: string[] = []
+  for (let col = 0; col < 9; col++) {
+    const cell = renderGridCell(state, [row, col], context)
+    if (cell !== undefined) {
+      cells.push(cell)
     }
   }
 
-  rows.push(bot)
+  let output = '║'
+  for (let index = 0; index < cells.length; index++) {
+    output += cells[index] ?? ''
+    if (index < cells.length - 1) {
+      output += getVerticalSeparator(index)
+    }
+  }
+  return `${output}║`
+}
+
+/** Return a horizontal separator after a grid row, when needed. */
+function renderGrid(state: GameState, options: { readonly colorsEnabled?: boolean }): string {
+  const colorsOn = options.colorsEnabled ?? false
+  const context: GridRenderContext = {
+    colorsOn,
+    colors: pc.createColors(colorsOn),
+    cellWidth: 3,
+  }
+  const rows: string[] = [GRID_BORDERS.top]
+
+  for (let row = 0; row < 9; row++) {
+    rows.push(renderGridRow(state, row, context))
+    if (row < 8) {
+      rows.push(row % 3 === 2 ? GRID_BORDERS.midThick : GRID_BORDERS.midThin)
+    }
+  }
+
+  rows.push(GRID_BORDERS.bottom)
   return rows.join('\n')
 }
 
@@ -390,9 +251,7 @@ export const KEYBINDINGS: readonly KeyBinding[] = Object.freeze([
  * applyKey(state, { kind: 'arrow-right' }) // { kind: 'move-cursor', row: ..., col: ... }
  * ```
  */
-export function applyKey(state: GameState, key: ParsedKey): Move | null {
-  const { cursor, status } = state
-
+function applyCursorKey(cursor: GameState['cursor'], key: ParsedKey): Move | null {
   switch (key.kind) {
     case 'arrow-up':
       return { kind: 'move-cursor', row: cursor.row - 1, col: cursor.col }
@@ -411,13 +270,51 @@ export function applyKey(state: GameState, key: ParsedKey): Move | null {
       return { kind: 'move-cursor', row: 0, col: 0 }
     case 'ctrl-end':
       return { kind: 'move-cursor', row: 8, col: 8 }
+    default:
+      return null
+  }
+}
 
+/** Create a clear move when the game is still editable. */
+function createClearMove(state: GameState): Move | null {
+  if (state.status !== 'playing') {
+    return null
+  }
+  return { kind: 'clear', row: state.cursor.row, col: state.cursor.col }
+}
+
+/** Map a printable command character to a game action. */
+function applyCharacterKey(state: GameState, character: string): Move | null {
+  switch (character.toLowerCase()) {
+    case '0':
+      return createClearMove(state)
+    case 'h':
+      return { kind: 'hint' }
+    case 'u':
+      return { kind: 'undo' }
+    case 'n':
+      if (state.status === 'won' || state.status === 'quit') {
+        return { kind: 'new-game' }
+      }
+      return null
+    case 'a':
+      return state.status === 'won' ? { kind: 'toggle-achievements' } : null
+    case 'q':
+      return { kind: 'quit' }
+    default:
+      return null
+  }
+}
+
+/** Map non-navigation key events to game actions. */
+function applyInputKey(state: GameState, key: ParsedKey): Move | null {
+  switch (key.kind) {
     case 'digit':
-      if (status === 'playing') {
+      if (state.status === 'playing') {
         return {
           kind: 'place',
-          row: cursor.row,
-          col: cursor.col,
+          row: state.cursor.row,
+          col: state.cursor.col,
           value: key.value,
         }
       }
@@ -425,40 +322,10 @@ export function applyKey(state: GameState, key: ParsedKey): Move | null {
 
     case 'backspace':
     case 'delete':
-      if (status === 'playing') {
-        return { kind: 'clear', row: cursor.row, col: cursor.col }
-      }
-      return null
+      return createClearMove(state)
 
     case 'char':
-      if (key.char === '0') {
-        if (status === 'playing') {
-          return { kind: 'clear', row: cursor.row, col: cursor.col }
-        }
-        return null
-      }
-      if (key.char === 'h' || key.char === 'H') {
-        return { kind: 'hint' }
-      }
-      if (key.char === 'u' || key.char === 'U') {
-        return { kind: 'undo' }
-      }
-      if (key.char === 'n' || key.char === 'N') {
-        if (status === 'won' || status === 'quit') {
-          return { kind: 'new-game' }
-        }
-        return null
-      }
-      if (key.char === 'a' || key.char === 'A') {
-        if (status === 'won') {
-          return { kind: 'toggle-achievements' }
-        }
-        return null
-      }
-      if (key.char === 'q' || key.char === 'Q') {
-        return { kind: 'quit' }
-      }
-      return null
+      return applyCharacterKey(state, key.char)
 
     case 'escape':
       return { kind: 'quit' }
@@ -471,9 +338,58 @@ export function applyKey(state: GameState, key: ParsedKey): Move | null {
   }
 }
 
+export function applyKey(state: GameState, key: ParsedKey): Move | null {
+  return applyCursorKey(state.cursor, key) ?? applyInputKey(state, key)
+}
+
 // ---------------------------------------------------------------------------
 // Part 4: Win Screen + Achievements (T-014, T-015)
 // ---------------------------------------------------------------------------
+
+/** Format the common header used by the win screen. */
+function formatWinHeader(state: GameState, context: ColorContext): string {
+  const diffName = difficultyToName(state.difficulty)
+  const header = `Sudoku CLI — ${diffName}`
+  return context.colorsOn ? context.colors.dim(context.colors.bold(header)) : header
+}
+
+/** Format the frozen or current win-screen statistics. */
+function formatWinStats(state: GameState): string {
+  const elapsed = state.frozenTime !== undefined
+    ? state.frozenTime - state.startedAt
+    : Date.now() - state.startedAt
+  return `Time: ${formatTime(elapsed)} · Moves: ${String(state.moveCount)} · Errors: ${String(state.errorCount)}`
+}
+
+/** Append the congratulations message and win statistics. */
+function appendWinMessage(lines: string[], state: GameState, context: ColorContext): void {
+  const message = context.colorsOn
+    ? context.colors.bold(context.colors.green('🎉 Congratulations! You won!'))
+    : 'Congratulations! You won!'
+  const stats = formatWinStats(state)
+
+  lines.push(message, '', context.colorsOn ? context.colors.dim(stats) : stats)
+}
+
+/** Format the achievement notification shown below a win. */
+function formatAchievementUnlockMessage(count: number): string {
+  const plural = count > 1 ? 's' : ''
+  return `🏆 ${String(count)} achievement${plural} unlocked!`
+}
+
+/** Append an optional newly-unlocked achievement notification. */
+function appendAchievementNotice(
+  lines: string[],
+  newAchievements: readonly AchievementId[] | undefined,
+  context: ColorContext,
+): void {
+  if (newAchievements === undefined || newAchievements.length === 0) {
+    return
+  }
+
+  const message = formatAchievementUnlockMessage(newAchievements.length)
+  lines.push('', context.colorsOn ? context.colors.yellow(message) : message)
+}
 
 /**
  * Render win banner with stats.
@@ -494,46 +410,16 @@ export function renderWinBanner(
   newAchievements?: readonly AchievementId[],
 ): string {
   const colorsOn = options?.colorsEnabled ?? false
-  const colors = pc.createColors(colorsOn)
-  const lines: string[] = []
+  const context: ColorContext = { colorsOn, colors: pc.createColors(colorsOn) }
+  const lines: string[] = [
+    formatWinHeader(state, context),
+    '',
+    renderGrid(state, { colorsEnabled: colorsOn }),
+    '',
+  ]
 
-  // Header
-  const diffName = difficultyToName(state.difficulty)
-  const header = `Sudoku CLI — ${diffName}`
-  lines.push(colorsOn ? colors.dim(colors.bold(header)) : header)
-  lines.push('')
-
-  // Show the solved grid (locked/read-only, dimmed)
-  lines.push(renderGrid(state, { colorsEnabled: colorsOn }))
-  lines.push('')
-
-  const elapsed = state.frozenTime !== undefined
-    ? state.frozenTime - state.startedAt
-    : Date.now() - state.startedAt
-  const statsLine = `Time: ${formatTime(elapsed)} · Moves: ${state.moveCount} · Errors: ${state.errorCount}`
-
-  if (colorsOn) {
-    lines.push(colors.bold(colors.green('🎉 Congratulations! You won!')))
-  } else {
-    lines.push('Congratulations! You won!')
-  }
-  lines.push('')
-  lines.push(colorsOn ? colors.dim(statsLine) : statsLine)
-
-  if (newAchievements && newAchievements.length > 0) {
-    lines.push('')
-    if (colorsOn) {
-      lines.push(
-        colors.yellow(
-          `🏆 ${newAchievements.length} achievement${
-            newAchievements.length > 1 ? 's' : ''
-          } unlocked!`,
-        ),
-      )
-    } else {
-      lines.push(`🏆 ${newAchievements.length} achievement${newAchievements.length > 1 ? 's' : ''} unlocked!`)
-    }
-  }
+  appendWinMessage(lines, state, context)
+  appendAchievementNotice(lines, newAchievements, context)
 
   lines.push('')
   lines.push('N New Game  A Achievements  Q Quit')
@@ -614,6 +500,20 @@ export const ACHIEVEMENT_RARITY: Readonly<Record<AchievementId, Rarity>> = Objec
   completionist: 'legendary',
 })
 
+/** Apply the color associated with an achievement rarity. */
+function colorAchievement(content: string, rarity: Rarity, colors: TuiColors): string {
+  switch (rarity) {
+    case 'legendary':
+      return colors.magenta(content)
+    case 'gold':
+      return colors.yellow(content)
+    case 'silver':
+      return colors.cyan(content)
+    default:
+      return content
+  }
+}
+
 /**
  * Render inline achievement summary. Returns '' when colors disabled AND non-TTY.
  *
@@ -640,18 +540,11 @@ export function renderAchievementInline(
   const parts = newAchievements.map((id) => {
     const glyph = ACHIEVEMENT_GLYPHS[id]
     const name = id.replace(/_/g, ' ')
-    if (colorsOn) {
-      const rarity = ACHIEVEMENT_RARITY[id]
-      const colored = rarity === 'legendary'
-        ? colors.magenta(`${glyph} ${name}`)
-        : rarity === 'gold'
-          ? colors.yellow(`${glyph} ${name}`)
-          : rarity === 'silver'
-            ? colors.cyan(`${glyph} ${name}`)
-            : `${glyph} ${name}`
-      return colored
+    const content = `${glyph} ${name}`
+    if (!colorsOn) {
+      return content
     }
-    return `${glyph} ${name}`
+    return colorAchievement(content, ACHIEVEMENT_RARITY[id], colors)
   })
 
   return parts.join('  ')
@@ -685,7 +578,7 @@ export function renderAchievementDetail(
   } else {
     lines.push('Achievements')
   }
-  lines.push(`${totalUnlocked}/11 unlocked`)
+  lines.push(`${String(totalUnlocked)}/11 unlocked`)
   lines.push('')
 
   for (const id of newAchievements) {

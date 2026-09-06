@@ -1,10 +1,19 @@
-import { loadState } from '../persistence/state.js'
-import type { FsAdapter } from '../persistence/state.js'
-import { nodeLockFactory } from '../persistence/lock.js'
-import type { LockFactory } from '../persistence/lock.js'
-import { defaultStatePath, defaultStateLockPath, nodeFsAdapter } from '../persistence/state.js'
 import { ACHIEVEMENTS } from '../persistence/achievements.js'
 import type { AchievementId } from '../persistence/achievements.js'
+import { nodeLockFactory } from '../persistence/lock.js'
+import type { LockFactory } from '../persistence/lock.js'
+import {
+  defaultStateLockPath,
+  defaultStatePath,
+  loadState,
+  nodeFsAdapter,
+  type FsAdapter,
+  type StateFile,
+} from '../persistence/state.js'
+
+const ACHIEVEMENT_BY_ID = Object.fromEntries(
+  ACHIEVEMENTS.map((achievement) => [achievement.id, achievement]),
+) as Readonly<Record<AchievementId, (typeof ACHIEVEMENTS)[number]>>
 
 /** Result of the play-achievements command. */
 export interface PlayAchievementsResult {
@@ -17,6 +26,58 @@ export interface PlayAchievementsDeps {
   readonly fs?: FsAdapter
   readonly lock?: LockFactory
   readonly statePath?: string
+}
+
+/** Format unlocked achievements in newest-first order. */
+function formatUnlockedAchievements(
+  state: StateFile,
+  unlockedIds: readonly AchievementId[],
+): string[] {
+  if (unlockedIds.length === 0) {
+    return []
+  }
+
+  const unlocked = unlockedIds
+    .map((id) => ({ id, unlockedAt: state.achievements[id].unlockedAt }))
+    .sort((a, b) => b.unlockedAt.localeCompare(a.unlockedAt))
+  const lines: string[] = []
+
+  for (const entry of unlocked) {
+    const def = ACHIEVEMENT_BY_ID[entry.id]
+    lines.push(`  ${def.title} — ${def.description}`)
+  }
+
+  lines.push('')
+  return lines
+}
+
+/** Format achievements that have not yet been unlocked. */
+function formatLockedAchievements(unlockedIds: readonly AchievementId[]): string[] {
+  const locked = ACHIEVEMENTS.filter((achievement) => !unlockedIds.includes(achievement.id))
+  if (locked.length === 0) {
+    return []
+  }
+
+  return [
+    'Locked:',
+    ...locked.map((achievement) => `  ${achievement.title} — ${achievement.description}`),
+  ]
+}
+
+/** Format the complete achievement view. */
+function formatAchievementLines(state: StateFile): string[] {
+  const unlockedIds = Object.keys(state.achievements) as readonly AchievementId[]
+  const unlockedCount = String(unlockedIds.length)
+  const total = String(ACHIEVEMENTS.length)
+
+  return [
+    'Achievements',
+    '',
+    `${unlockedCount}/${total} unlocked`,
+    '',
+    ...formatUnlockedAchievements(state, unlockedIds),
+    ...formatLockedAchievements(unlockedIds),
+  ]
 }
 
 /**
@@ -39,45 +100,5 @@ export async function playAchievementsCommand(
   const statePath = deps?.statePath ?? defaultStatePath()
 
   const state = await loadState(fs, statePath, lock)
-  const lines: string[] = []
-
-  lines.push('Achievements')
-  lines.push('')
-
-  const unlockedIds = Object.keys(state.achievements) as readonly AchievementId[]
-  const total = ACHIEVEMENTS.length
-
-  lines.push(`${unlockedIds.length}/${total} unlocked`)
-  lines.push('')
-
-  // Unlocked achievements (sorted by unlockedAt descending)
-  if (unlockedIds.length > 0) {
-    const unlocked = unlockedIds
-      .map((id) => ({
-        id,
-        unlockedAt: state.achievements[id]?.unlockedAt ?? '',
-      }))
-      .sort((a, b) => b.unlockedAt.localeCompare(a.unlockedAt))
-
-    for (const entry of unlocked) {
-      const def = ACHIEVEMENTS.find((a) => a.id === entry.id)
-      if (def === undefined) continue
-      lines.push(`  ${def.title} — ${def.description}`)
-    }
-
-    lines.push('')
-  }
-
-  // Locked achievements
-  const locked = ACHIEVEMENTS.filter((a) => !unlockedIds.includes(a.id))
-
-  if (locked.length > 0) {
-    lines.push('Locked:')
-
-    for (const def of locked) {
-      lines.push(`  ${def.title} — ${def.description}`)
-    }
-  }
-
-  return { kind: 'play_achievements', lines }
+  return { kind: 'play_achievements', lines: formatAchievementLines(state) }
 }

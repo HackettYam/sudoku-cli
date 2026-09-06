@@ -1,6 +1,12 @@
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
 import stylistic from '@stylistic/eslint-plugin'
+import importX from 'eslint-plugin-import-x'
+import { createTypeScriptImportResolver } from 'eslint-import-resolver-typescript'
+import { fileURLToPath, URL } from 'node:url'
+
+const projectRoot = fileURLToPath(new URL('.', import.meta.url))
+const tsconfigPath = fileURLToPath(new URL('./tsconfig.json', import.meta.url))
 
 /**
  * ESLint flat config for @hackettyam/sudoku-cli.
@@ -16,12 +22,23 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     files: ['src/**/*.ts'],
+    extends: tseslint.configs.strictTypeChecked,
     plugins: {
       '@stylistic': stylistic,
+      'import-x': importX,
     },
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: projectRoot,
+      },
+    },
+    settings: {
+      'import-x/resolver-next': [
+        createTypeScriptImportResolver({ project: tsconfigPath }),
+      ],
     },
     rules: {
       '@stylistic/indent': ['error', 2],
@@ -43,6 +60,26 @@ export default tseslint.config(
       'no-debugger': 'error',
       'eqeqeq': ['error', 'always'],
       'no-var': 'error',
+      'import-x/order': [
+        'error',
+        {
+          alphabetize: { caseInsensitive: true, order: 'asc' },
+          groups: ['builtin', 'external', 'internal', ['parent', 'sibling', 'index'], 'object'],
+          'newlines-between': 'always',
+        },
+      ],
+      'import-x/no-duplicates': 'error',
+      'import-x/no-cycle': ['error', { ignoreExternal: true }],
+      'import-x/first': 'error',
+      'complexity': ['error', { max: 10 }],
+      'max-depth': ['error', 4],
+      'max-lines': ['error', { max: 500, skipBlankLines: true, skipComments: true }],
+      'max-lines-per-function': ['error', { max: 180, skipBlankLines: true, skipComments: true }],
+      'max-nested-callbacks': ['error', 3],
+      'max-params': ['error', 3],
+      'max-statements': ['error', 20],
+      'curly': ['error', 'multi-line', 'consistent'],
+      'no-nested-ternary': 'error',
     },
   },
   {

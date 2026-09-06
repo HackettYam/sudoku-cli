@@ -1,7 +1,8 @@
+import { Difficulty } from '@hackettyam/sudoku-tools'
 import { describe, it, expect } from 'vitest'
+
 import { ACHIEVEMENTS, evaluateAchievements } from '../../persistence/achievements.js'
 import type { AchievementContext } from '../../persistence/achievements.js'
-import { Difficulty } from '@hackettyam/sudoku-tools'
 
 // ---------------------------------------------------------------------------
 // Helpers

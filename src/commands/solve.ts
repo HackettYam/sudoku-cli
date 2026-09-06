@@ -1,9 +1,10 @@
 import { parseArgs as parseUtilArgs } from 'node:util'
-import { serializeBoard, solvePuzzle } from '@hackettyam/sudoku-tools'
-import { parseBoard } from '../format/board-string.js'
+
 import { errorMessage } from './_error-message.js'
 import type { CommandContract, CommandContext, ParseResult } from './contract.js'
 import type { CommandResult } from './result.js'
+import { parseBoard } from '../format/board-string.js'
+import { serializeBoard, solvePuzzle } from '../sudoku-tools.js'
 
 /**
  * Solves a user-supplied Sudoku board.

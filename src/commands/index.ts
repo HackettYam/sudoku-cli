@@ -1,9 +1,9 @@
+import type { CommandContract } from './contract.js'
+import { hintContract } from './hint.js'
 import { newContract } from './new.js'
+import { playContract } from './play-contract.js'
 import { solveContract } from './solve.js'
 import { validateContract } from './validate.js'
-import { hintContract } from './hint.js'
-import { playContract } from './play-contract.js'
-import type { CommandContract } from './contract.js'
 
 /**
  * The single source of truth for CLI dispatch.

@@ -1,5 +1,3 @@
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import {
   readFile as fsReadFile,
@@ -9,8 +7,12 @@ import {
   readdir as fsReaddir,
   access as fsAccess,
 } from 'node:fs/promises'
-import type { DifficultyType } from '@hackettyam/sudoku-tools'
-import type { AchievementId } from './achievements.js'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+import { Difficulty, type DifficultyType } from '@hackettyam/sudoku-tools'
+
+import { ACHIEVEMENTS, type AchievementId } from './achievements.js'
 import type { LockFactory } from './lock.js'
 
 // ---------------------------------------------------------------------------
@@ -129,33 +131,36 @@ export function memoryFsAdapter(): FsAdapter {
   const store = new Map<string, string>()
 
   return {
-    async readFile(path: string): Promise<string> {
+    readFile(path: string): Promise<string> {
       const data = store.get(path)
       if (data === undefined) {
-        throw Object.assign(new Error(`ENOENT: no such file '${path}'`), {
+        return Promise.reject(Object.assign(new Error(`ENOENT: no such file '${path}'`), {
           code: 'ENOENT',
-        })
+        }))
       }
-      return data
+      return Promise.resolve(data)
     },
-    async writeFile(path: string, data: string): Promise<void> {
+    writeFile(path: string, data: string): Promise<void> {
       store.set(path, data)
+      return Promise.resolve()
     },
-    async mkdir(_path: string, _options?: { mode?: number }): Promise<void> {
+    mkdir(_path: string, _options?: { mode?: number }): Promise<void> {
       // no-op for in-memory adapter
+      return Promise.resolve()
     },
-    async rename(oldPath: string, newPath: string): Promise<void> {
+    rename(oldPath: string, newPath: string): Promise<void> {
       const data = store.get(oldPath)
       if (data === undefined) {
-        throw Object.assign(
+        return Promise.reject(Object.assign(
           new Error(`ENOENT: no such file '${oldPath}'`),
           { code: 'ENOENT' },
-        )
+        ))
       }
       store.delete(oldPath)
       store.set(newPath, data)
+      return Promise.resolve()
     },
-    async readdir(path: string): Promise<readonly string[]> {
+    readdir(path: string): Promise<readonly string[]> {
       const prefix = path.endsWith('/') ? path : `${path}/`
       const names = new Set<string>()
       for (const key of store.keys()) {
@@ -169,10 +174,10 @@ export function memoryFsAdapter(): FsAdapter {
           }
         }
       }
-      return [...names]
+      return Promise.resolve([...names])
     },
-    async exists(path: string): Promise<boolean> {
-      return store.has(path)
+    exists(path: string): Promise<boolean> {
+      return Promise.resolve(store.has(path))
     },
   }
 }
@@ -219,6 +224,15 @@ export interface StateFile {
   readonly achievements: Readonly<Record<AchievementId, { readonly unlockedAt: string }>>
   readonly lastSaveId: string | null
 }
+
+/** Result returned by a synchronous state transaction updater. */
+export interface StateUpdate<T> {
+  readonly state: StateFile
+  readonly result: T
+}
+
+/** Synchronous state transaction updater. */
+export type StateUpdater<T> = (state: StateFile) => StateUpdate<T>
 
 // ---------------------------------------------------------------------------
 // Default state
@@ -288,32 +302,7 @@ export async function loadState(
   const handle = lockResult.handle
 
   try {
-    const raw = await fs.readFile(path)
-
-    if (raw.length > MAX_STATE_SIZE) {
-      throw new StateCorruptError(
-        `State file exceeds size limit (${raw.length} > ${MAX_STATE_SIZE})`,
-      )
-    }
-
-    const parsed: unknown = JSON.parse(raw)
-
-    if (!isStateFile(parsed)) {
-      throw new StateCorruptError('State file does not match expected schema')
-    }
-
-    return parsed as StateFile
-  } catch (error) {
-    if (
-      error instanceof StateCorruptError ||
-      error instanceof StateLockBusyError
-    ) {
-      throw error
-    }
-
-    throw new StateCorruptError(
-      `Failed to read or parse state file: ${error instanceof Error ? error.message : String(error)}`,
-    )
+    return await readStateFile(fs, path)
   } finally {
     await lock.release(handle)
   }
@@ -335,12 +324,10 @@ export async function loadState(
  * @param lock  - Lock factory for exclusive access.
  * @throws {StateLockBusyError} If the lock cannot be acquired.
  */
-export async function saveState(
-  fs: FsAdapter,
-  path: string,
-  state: StateFile,
-  lock: LockFactory,
-): Promise<void> {
+type SaveStateArgs = readonly [FsAdapter, string, StateFile, LockFactory]
+
+export async function saveState(...args: SaveStateArgs): Promise<void> {
+  const [fs, path, state, lock] = args
   const lockResult = await lock.acquire()
 
   if (!lockResult.ok) {
@@ -350,15 +337,47 @@ export async function saveState(
   const handle = lockResult.handle
 
   try {
-    const dir = path.replace(/[/\\][^/\\]+$/, '')
-    await fs.mkdir(dir, { mode: 0o700 })
+    await ensureParentDirectory(fs, path)
+    await writeStateFile(fs, path, state)
+  } finally {
+    await lock.release(handle)
+  }
+}
 
-    const suffix = randomBytes(8).toString('hex')
-    const tmpPath = `${path}.tmp-${suffix}`
-    const data = JSON.stringify(state)
+// ---------------------------------------------------------------------------
+// updateState
+// ---------------------------------------------------------------------------
 
-    await fs.writeFile(tmpPath, data)
-    await fs.rename(tmpPath, path)
+/**
+ * Update the state atomically while holding one exclusive lock.
+ *
+ * The updater runs synchronously against the latest validated state. Its
+ * returned result is passed back to the caller without a second state read.
+ *
+ * @param args - Filesystem, state path, lock, and synchronous updater.
+ * @returns The typed result returned by the updater.
+ * @throws {StateLockBusyError} If the lock cannot be acquired.
+ * @throws {StateCorruptError} If the existing state is invalid.
+ * @throws {StateVersionError} If the existing state version is unsupported.
+ */
+type UpdateStateArgs<T> = readonly [FsAdapter, string, LockFactory, StateUpdater<T>]
+
+export async function updateState<T>(...args: UpdateStateArgs<T>): Promise<T> {
+  const [fs, path, lock, updater] = args
+  await ensureParentDirectory(fs, path)
+
+  const lockResult = await lock.acquire()
+  if (!lockResult.ok) {
+    throw new StateLockBusyError()
+  }
+
+  const handle = lockResult.handle
+
+  try {
+    const currentState = await readStateOrDefault(fs, path)
+    const update = updater(currentState)
+    await writeStateFile(fs, path, update.state)
+    return update.result
   } finally {
     await lock.release(handle)
   }
@@ -461,22 +480,205 @@ export function unlockAchievements(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function isStateFile(value: unknown): value is {
-  version: number
-  stats: Record<string, unknown>
-  totalPlays: number
-  achievements: Record<string, unknown>
-  lastSaveId: string | null
-} {
-  if (typeof value !== 'object' || value === null) return false
+const STATE_KEYS = ['version', 'stats', 'totalPlays', 'achievements', 'lastSaveId'] as const
+const STATS_KEYS = ['totalPlays', 'totalWins', 'bestTimeMs', 'fewestMoves', 'lastPlayedAt'] as const
+const ACHIEVEMENT_KEYS = ['unlockedAt'] as const
+const SUPPORTED_DIFFICULTIES = [
+  Difficulty.Novice,
+  Difficulty.Easy,
+  Difficulty.Normal,
+  Difficulty.Hard,
+  Difficulty.Expert,
+] as const
+const UUID_V4_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const ISO_TIMESTAMP_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
-  const obj = value as Record<string, unknown>
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
-  if (obj.version !== 1) return false
-  if (typeof obj.stats !== 'object' || obj.stats === null) return false
-  if (typeof obj.totalPlays !== 'number') return false
-  if (typeof obj.achievements !== 'object' || obj.achievements === null) return false
-  if (obj.lastSaveId !== null && typeof obj.lastSaveId !== 'string') return false
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const actual = Object.keys(value)
+  return actual.length === expected.length
+    && expected.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+}
 
-  return true
+function isFiniteNonNegative(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return isFiniteNonNegative(value) && Number.isInteger(value)
+}
+
+function isNullableFiniteNonNegative(value: unknown): value is number | null {
+  return value === null || isFiniteNonNegative(value)
+}
+
+function isNullableNonNegativeInteger(value: unknown): value is number | null {
+  return value === null || isNonNegativeInteger(value)
+}
+
+function isTimestamp(value: unknown): value is string {
+  return typeof value === 'string'
+    && ISO_TIMESTAMP_RE.test(value)
+    && Number.isFinite(Date.parse(value))
+}
+
+function isUuidV4(value: unknown): value is string {
+  return typeof value === 'string' && UUID_V4_RE.test(value)
+}
+
+function isAchievementId(value: string): value is AchievementId {
+  return ACHIEVEMENTS.some((achievement) => achievement.id === value)
+}
+
+function isPerDifficultyStats(value: unknown): value is PerDifficultyStats {
+  if (!isRecord(value) || !hasExactKeys(value, STATS_KEYS)) return false
+
+  return isNonNegativeInteger(value.totalPlays)
+    && isNonNegativeInteger(value.totalWins)
+    && isNullableFiniteNonNegative(value.bestTimeMs)
+    && isNullableNonNegativeInteger(value.fewestMoves)
+    && isNullableFiniteNonNegative(value.lastPlayedAt)
+}
+
+function isCompleteStats(
+  value: Record<string, unknown>,
+): value is Record<DifficultyType, PerDifficultyStats> {
+  return hasExactKeys(value, SUPPORTED_DIFFICULTIES)
+    && SUPPORTED_DIFFICULTIES.every((difficulty) => isPerDifficultyStats(value[difficulty]))
+}
+
+function isAchievementRecord(value: unknown): value is { readonly unlockedAt: string } {
+  return isRecord(value)
+    && hasExactKeys(value, ACHIEVEMENT_KEYS)
+    && isTimestamp(value.unlockedAt)
+}
+
+function isAchievements(
+  value: Record<string, unknown>,
+): value is Readonly<Record<AchievementId, { readonly unlockedAt: string }>> {
+  return Object.entries(value).every(([id, record]) =>
+    isAchievementId(id) && isAchievementRecord(record),
+  )
+}
+
+function isStateFile(value: unknown): value is StateFile {
+  if (!isRecord(value) || !hasExactKeys(value, STATE_KEYS) || value.version !== 1) {
+    return false
+  }
+
+  return isRecord(value.stats)
+    && isCompleteStats(value.stats)
+    && isNonNegativeInteger(value.totalPlays)
+    && isRecord(value.achievements)
+    && isAchievements(value.achievements)
+    && (value.lastSaveId === null || isUuidV4(value.lastSaveId))
+}
+
+function isKnownStateError(
+  error: unknown,
+): error is StateCorruptError | StateVersionError | StateLockBusyError {
+  return error instanceof StateCorruptError
+    || error instanceof StateVersionError
+    || error instanceof StateLockBusyError
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return isRecord(error) && error.code === 'EEXIST'
+}
+
+function stateDirectory(path: string): string {
+  const separatorIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return separatorIndex < 0 ? '.' : path.slice(0, separatorIndex) || '.'
+}
+
+async function ensureParentDirectory(fs: FsAdapter, path: string): Promise<void> {
+  try {
+    await fs.mkdir(stateDirectory(path), { mode: 0o700 })
+  } catch (error) {
+    if (!isAlreadyExistsError(error)) {
+      throw error
+    }
+  }
+}
+
+function createDefaultState(): StateFile {
+  return {
+    ...DEFAULT_STATE,
+    stats: {
+      novice: { ...DEFAULT_STATE.stats.novice },
+      easy: { ...DEFAULT_STATE.stats.easy },
+      normal: { ...DEFAULT_STATE.stats.normal },
+      hard: { ...DEFAULT_STATE.stats.hard },
+      expert: { ...DEFAULT_STATE.stats.expert },
+    },
+    achievements: {} as StateFile['achievements'],
+  }
+}
+
+async function readStateOrDefault(fs: FsAdapter, path: string): Promise<StateFile> {
+  if (!(await fs.exists(path))) {
+    return createDefaultState()
+  }
+
+  return readStateFile(fs, path)
+}
+
+async function writeStateFile(
+  fs: FsAdapter,
+  path: string,
+  state: StateFile,
+): Promise<void> {
+  const suffix = randomBytes(8).toString('hex')
+  const tmpPath = `${path}.tmp-${suffix}`
+  const data = JSON.stringify(state)
+
+  await fs.writeFile(tmpPath, data)
+  await fs.rename(tmpPath, path)
+}
+
+function parseStateFile(raw: string): StateFile {
+  if (raw.length > MAX_STATE_SIZE) {
+    throw new StateCorruptError(
+      `State file exceeds size limit (${String(raw.length)} > ${String(MAX_STATE_SIZE)})`,
+    )
+  }
+
+  const parsed: unknown = JSON.parse(raw)
+
+  if (!isRecord(parsed)
+    || !Object.prototype.hasOwnProperty.call(parsed, 'version')) {
+    throw new StateCorruptError('State file does not match expected schema')
+  }
+
+  if (parsed.version !== 1) {
+    throw new StateVersionError(parsed.version)
+  }
+
+  if (!isStateFile(parsed)) {
+    throw new StateCorruptError('State file does not match expected schema')
+  }
+
+  return parsed
+}
+
+async function readStateFile(fs: FsAdapter, path: string): Promise<StateFile> {
+  try {
+    const raw = await fs.readFile(path)
+    return parseStateFile(raw)
+  } catch (error) {
+    if (isKnownStateError(error)) {
+      throw error
+    }
+
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new StateCorruptError(`Failed to read or parse state file: ${reason}`)
+  }
 }

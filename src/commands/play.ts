@@ -1,33 +1,20 @@
-import type { DifficultyType } from '@hackettyam/sudoku-tools'
-import { deserializeBoard } from '@hackettyam/sudoku-tools'
-import { createGame, applyMove, getStats } from '../game/state.js'
-import type { GameState } from '../game/state.js'
-import {
-  parseKeypress,
-  renderGame,
-  renderWinBanner,
-  renderAchievementDetail,
-  applyKey,
-} from '../tui.js'
-import { runTuiSession } from '../output.js'
-import type { TuiSessionOptions, TuiRunner } from '../output.js'
-import { loadState, saveState, mergeStats, unlockAchievements } from '../persistence/state.js'
-import type { FsAdapter } from '../persistence/state.js'
-import { saveGame, loadGame, latestSaveId } from '../persistence/save.js'
-import type { SaveFile } from '../persistence/save.js'
-import { evaluateAchievements } from '../persistence/achievements.js'
-import type { AchievementId } from '../persistence/achievements.js'
+import { deserializeBoard, type BoardType, type DifficultyType } from '@hackettyam/sudoku-tools'
 
-import { nodeLockFactory, inMemoryLockFactory } from '../persistence/lock.js'
-import type { LockFactory } from '../persistence/lock.js'
-import {
-  defaultStatePath,
-  defaultSavesDir,
-  defaultStateLockPath,
-  nodeFsAdapter,
-  memoryFsAdapter,
-} from '../persistence/state.js'
 import { parseDifficulty } from '../format/difficulty.js'
+import { applyMove, createGame, getStats, type GameState } from '../game/state.js'
+import { runTuiSession, type TuiRunner, type TuiSessionOptions } from '../output.js'
+import { evaluateAchievements, type AchievementId } from '../persistence/achievements.js'
+import { inMemoryLockFactory, nodeLockFactory, type LockFactory } from '../persistence/lock.js'
+import { latestSaveId, loadGame, saveGame, type SaveFile } from '../persistence/save.js'
+import {
+  defaultSavesDir, defaultStateLockPath, defaultStatePath, loadState,
+  memoryFsAdapter, mergeStats, nodeFsAdapter, type FsAdapter,
+  unlockAchievements, updateState,
+} from '../persistence/state.js'
+import {
+  applyKey, parseKeypress, renderAchievementDetail, renderGame, renderWinBanner,
+  type ParsedKey,
+} from '../tui.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -68,6 +55,35 @@ export interface PlayCommandResult {
   readonly totalUnlocked?: number
 }
 
+type PlayResolution<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly result: PlayCommandResult }
+
+interface PlaySessionState {
+  currentState: GameState
+  resolved: boolean
+  transitioning: boolean
+  finishing: boolean
+  timerInterval?: ReturnType<typeof setInterval>
+  pendingWin: Promise<PlayCommandResult | undefined> | undefined
+  queuedKey: ParsedKey | undefined
+  lastNewAchievements: readonly AchievementId[]
+  lastTotalUnlocked: number
+}
+
+interface PlaySessionContext {
+  readonly session: PlaySessionState
+  readonly runner: () => TuiRunner
+  readonly persistence: PlayPersistence
+  readonly resolve: (result: PlayCommandResult) => void
+  readonly startTimer: () => void
+}
+
+interface PlayCommandDependencies {
+  readonly io?: PlayIO
+  readonly persistence?: PlayPersistence
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -87,56 +103,89 @@ export interface PlayCommandResult {
  */
 export async function playCommand(
   options?: PlayOptions,
-  deps?: {
-    io?: PlayIO
-    persistence?: PlayPersistence
-  },
+  deps?: PlayCommandDependencies,
 ): Promise<PlayCommandResult> {
-  const io = deps?.io ?? defaultPlayIO()
-  const persistence = deps?.persistence ?? defaultPlayPersistence()
+  const { io, persistence } = resolvePlayDependencies(deps)
+  const difficultyResult = resolveDifficulty(options?.difficulty)
 
-  // 1. Resolve difficulty
-  let difficulty: DifficultyType
-
-  try {
-    difficulty = parseDifficulty(options?.difficulty)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return { kind: 'play_exit', reason: 'error', message }
+  if (!difficultyResult.ok) {
+    return difficultyResult.result
   }
 
-  // 2. Load or create game
-  let state: GameState
+  const stateResult = await resolveGameState(
+    options,
+    difficultyResult.value,
+    persistence,
+  )
+  if (!stateResult.ok) {
+    return stateResult.result
+  }
 
+  if (shouldMergeStartStats(options)) {
+    try {
+      await mergeStartStats(persistence, difficultyResult.value)
+    } catch (error) {
+      return playErrorResult(error)
+    }
+  }
+
+  return runPlaySession(stateResult.value, io, persistence)
+}
+
+function resolvePlayDependencies(deps?: PlayCommandDependencies): {
+  readonly io: PlayIO
+  readonly persistence: PlayPersistence
+} {
+  return {
+    io: deps?.io ?? defaultPlayIO(),
+    persistence: deps?.persistence ?? defaultPlayPersistence(),
+  }
+}
+
+function shouldMergeStartStats(options: PlayOptions | undefined): boolean {
+  return !options?.loadId && !options?.resumeLast
+}
+
+function resolveDifficulty(value: string | undefined): PlayResolution<DifficultyType> {
+  try {
+    return { ok: true, value: parseDifficulty(value) }
+  } catch (error) {
+    return { ok: false, result: playErrorResult(error) }
+  }
+}
+
+async function resolveGameState(
+  options: PlayOptions | undefined,
+  difficulty: DifficultyType,
+  persistence: PlayPersistence,
+): Promise<PlayResolution<GameState>> {
   try {
     if (options?.loadId) {
-      const save = await loadGame(persistence.fs, options.loadId, persistence.savesDir)
-      state = stateFromSave(save)
-    } else if (options?.resumeLast) {
-      const savedState = await loadState(persistence.fs, persistence.statePath, persistence.lock)
-      const latestId = latestSaveId(savedState)
-
-      if (latestId) {
-        const save = await loadGame(persistence.fs, latestId, persistence.savesDir)
-        state = stateFromSave(save)
-      } else {
-        state = createGame(difficulty)
+      return {
+        ok: true,
+        value: stateFromSave(await loadGame(persistence.fs, options.loadId, persistence.savesDir)),
       }
-    } else {
-      state = createGame(difficulty)
     }
+
+    if (options?.resumeLast) {
+      const latestId = latestSaveId(await loadState(persistence.fs, persistence.statePath, persistence.lock))
+      if (latestId) {
+        return {
+          ok: true,
+          value: stateFromSave(await loadGame(persistence.fs, latestId, persistence.savesDir)),
+        }
+      }
+    }
+
+    return { ok: true, value: createGame(difficulty) }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return { kind: 'play_exit', reason: 'error', message }
+    return { ok: false, result: playErrorResult(error) }
   }
+}
 
-  // 3. Merge stats for start (only when creating a fresh game)
-  if (!options?.loadId && !options?.resumeLast) {
-    await mergeStartStats(persistence, difficulty)
-  }
-
-  // 4. Run TUI session
-  return runPlaySession(state, io, persistence)
+function playErrorResult(error: unknown): PlayCommandResult {
+  const message = error instanceof Error ? error.message : String(error)
+  return { kind: 'play_exit', reason: 'error', message }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,144 +202,266 @@ function runPlaySession(
   persistence: PlayPersistence,
 ): Promise<PlayCommandResult> {
   return new Promise<PlayCommandResult>((resolve) => {
-    let currentState = state
-    let resolved = false
-    let lastNewAchievements: readonly AchievementId[] = []
-    let lastTotalUnlocked = 0
+    const session: PlaySessionState = {
+      currentState: state, resolved: false, transitioning: false, finishing: false,
+      pendingWin: undefined, queuedKey: undefined,
+      lastNewAchievements: [], lastTotalUnlocked: 0,
+    }
+    const startTimer = (): void => {
+      session.timerInterval = setInterval(() => {
+        if (!session.resolved && session.currentState.status !== 'won') runner.draw()
+      }, 1000)
+    }
 
     const runner = io.createTuiSession({
       colorsEnabled: true,
-      onKey: (key) => {
-        if (resolved) return
-
-        const keys = parseKeypress(key)
-
-        for (const parsedKey of keys) {
-          // Handle win state keys separately (before applyKey)
-          if (currentState.status === 'won') {
-            // If in achievements view, any key goes back to win menu
-            if (currentState.winView === 'achievements') {
-              currentState = applyMove(currentState, { kind: 'toggle-achievements' })
-              runner.draw()
-              return
-            }
-
-            if (parsedKey.kind === 'char' && (parsedKey.char === 'n' || parsedKey.char === 'N')) {
-              // Start a new game with the same difficulty — stay in the session
-              currentState = createGame(currentState.difficulty)
-              startTimer()
-              runner.draw()
-              return
-            }
-            if (
-              (parsedKey.kind === 'char' && (parsedKey.char === 'q' || parsedKey.char === 'Q')) ||
-              parsedKey.kind === 'escape'
-            ) {
-              // Quit
-              resolved = true
-              if (timerInterval) clearInterval(timerInterval)
-              runner.cleanup()
-              handleQuit(currentState, persistence).then(resolve)
-              return
-            }
-            if (parsedKey.kind === 'char' && (parsedKey.char === 'a' || parsedKey.char === 'A')) {
-              // Toggle achievements
-              currentState = applyMove(currentState, { kind: 'toggle-achievements' })
-              runner.draw()
-              return
-            }
-            // Any other key: re-render win screen (no-op)
-            runner.draw()
-            return
-          }
-
-          // Normal game key handling
-          const move = applyKey(currentState, parsedKey)
-
-          if (move === null) continue
-
-          currentState = applyMove(currentState, move)
-
-          if (currentState.status === 'won') {
-            if (timerInterval) clearInterval(timerInterval)
-            // Cache achievement data for the render function
-            handleWin(currentState, persistence).then((result) => {
-              if (result.kind === 'play_exit' && result.reason === 'won') {
-                lastNewAchievements = result.newAchievements ?? []
-                lastTotalUnlocked = result.totalUnlocked ?? 0
-              }
-            })
-            // render() is now state-aware — it will show win screen
-            runner.draw()
-            return
-          }
-
-          if (currentState.status === 'quit') {
-            resolved = true
-            if (timerInterval) clearInterval(timerInterval)
-            runner.cleanup()
-            handleQuit(currentState, persistence).then(resolve)
-            return
-          }
-        }
-
-        runner.draw()
-      },
-      render: () => {
-        if (currentState.status === 'won') {
-          if (currentState.winView === 'achievements') {
-            // Compute achievements for the detail view
-            const stats = getStats(currentState)
-            const perDifficultyWins: Record<string, number> = {}
-            const difficultiesWon: string[] = []
-            // Use a default empty state if we can't load synchronously
-            const ctx = {
-              difficulty: currentState.difficulty,
-              elapsedMs: stats.elapsedMs,
-              moveCount: stats.moveCount,
-              hintCount: currentState.hintCount,
-              undoCount: currentState.undoCount,
-              errors: [] as readonly string[],
-              perDifficultyWins: perDifficultyWins as Record<DifficultyType, number>,
-              difficultiesWon: difficultiesWon as DifficultyType[],
-            }
-            const achievements = evaluateAchievements(ctx)
-            const achievementOutput = renderAchievementDetail(
-              achievements,
-              lastTotalUnlocked,
-              { colorsEnabled: true },
-            )
-            io.stdout(achievementOutput)
-          } else {
-            const winOutput = renderWinBanner(currentState, { colorsEnabled: true }, lastNewAchievements)
-            io.stdout(winOutput)
-          }
-        } else {
-          const screen = renderGame(currentState, { colorsEnabled: true })
-          io.stdout(screen)
-        }
-      },
+      onKey: (key) => { handleSessionKey(key, context) },
+      render: () => { renderSession(session, io) },
     })
-
-    // Periodic timer refresh every second
-    let timerInterval: ReturnType<typeof setInterval> | undefined
-
-    function startTimer(): void {
-      timerInterval = setInterval(() => {
-        if (!resolved && currentState.status !== 'won') runner.draw()
-      }, 1000)
+    const context: PlaySessionContext = {
+      session, runner: () => runner, persistence,
+      resolve, startTimer,
     }
 
     startTimer()
 
     runner.draw()
-    runner.run()
+    void runner.run()
   })
+}
+
+function handleSessionKey(key: Buffer, context: PlaySessionContext): void {
+  const { session, runner } = context
+  if (session.resolved || session.finishing) return
+
+  const parsedKeys = parseKeypress(key)
+  if (session.transitioning) {
+    queueSessionKeys(parsedKeys, session)
+    return
+  }
+
+  for (const parsedKey of parsedKeys) {
+    if (processSessionKey(parsedKey, context)) return
+  }
+
+  runner().draw()
+}
+
+function processSessionKey(parsedKey: ParsedKey, context: PlaySessionContext): boolean {
+  if (context.session.currentState.status === 'won') {
+    handleWonKey(parsedKey, context)
+    return true
+  }
+
+  return handlePlayingKey(parsedKey, context)
+}
+
+function queueSessionKeys(parsedKeys: readonly ParsedKey[], session: PlaySessionState): void {
+  session.queuedKey = parsedKeys.find(isQuitKey)
+}
+
+function handleWonKey(parsedKey: ParsedKey, context: PlaySessionContext): void {
+  const { session, runner } = context
+  const currentState = session.currentState
+
+  if (currentState.winView === 'achievements') {
+    session.currentState = applyMove(currentState, { kind: 'toggle-achievements' })
+    runner().draw()
+    return
+  }
+
+  if (isNewGameKey(parsedKey)) {
+    void startNewGame(context)
+    return
+  }
+
+  if (isQuitKey(parsedKey)) {
+    beginQuit(context, currentState)
+    return
+  }
+
+  if (isAchievementsKey(parsedKey)) {
+    session.currentState = applyMove(currentState, { kind: 'toggle-achievements' })
+  }
+  runner().draw()
+}
+
+function isNewGameKey(parsedKey: ParsedKey): boolean {
+  return parsedKey.kind === 'char' && (parsedKey.char === 'n' || parsedKey.char === 'N')
+}
+
+function isQuitKey(parsedKey: ParsedKey): boolean {
+  return (
+    (parsedKey.kind === 'char' && (parsedKey.char === 'q' || parsedKey.char === 'Q')) ||
+    parsedKey.kind === 'escape'
+  )
+}
+
+function isAchievementsKey(parsedKey: ParsedKey): boolean {
+  return parsedKey.kind === 'char' && (parsedKey.char === 'a' || parsedKey.char === 'A')
+}
+
+function handlePlayingKey(parsedKey: ParsedKey, context: PlaySessionContext): boolean {
+  const { session, runner } = context
+  const move = applyKey(session.currentState, parsedKey)
+  if (move === null) return false
+
+  session.currentState = applyMove(session.currentState, move)
+  if (session.currentState.status === 'won') {
+    if (session.timerInterval) clearInterval(session.timerInterval)
+    startWinPersistence(session.currentState, context)
+    runner().draw()
+    return true
+  }
+
+  if (session.currentState.status === 'quit') {
+    beginQuit(context, session.currentState)
+    return true
+  }
+
+  return false
+}
+
+function renderSession(session: PlaySessionState, io: PlayIO): void {
+  const state = session.currentState
+  if (state.status !== 'won') {
+    io.stdout(renderGame(state, { colorsEnabled: true }))
+    return
+  }
+
+  if (state.winView !== 'achievements') {
+    io.stdout(renderWinBanner(state, { colorsEnabled: true }, session.lastNewAchievements))
+    return
+  }
+
+  const stats = getStats(state)
+  const perDifficultyWins: Record<string, number> = {}
+  const difficultiesWon: string[] = []
+  const ctx = {
+    difficulty: state.difficulty,
+    elapsedMs: stats.elapsedMs,
+    moveCount: stats.moveCount,
+    hintCount: state.hintCount,
+    undoCount: state.undoCount,
+    errors: [] as readonly string[],
+    perDifficultyWins: perDifficultyWins as Record<DifficultyType, number>,
+    difficultiesWon: difficultiesWon as DifficultyType[],
+  }
+  const achievements = evaluateAchievements(ctx)
+  io.stdout(renderAchievementDetail(
+    achievements,
+    session.lastTotalUnlocked,
+    { colorsEnabled: true },
+  ))
 }
 
 // ---------------------------------------------------------------------------
 // Win / Quit handlers
 // ---------------------------------------------------------------------------
+
+function startWinPersistence(
+  state: GameState,
+  context: PlaySessionContext,
+): void {
+  const { session, persistence } = context
+  const pendingWin = handleWin(state, persistence).then(
+    (result) => {
+      session.lastNewAchievements = result.newAchievements ?? []
+      session.lastTotalUnlocked = result.totalUnlocked ?? 0
+      return undefined
+    },
+    (error: unknown) => playErrorResult(error),
+  )
+
+  session.pendingWin = pendingWin
+  void pendingWin.then((result) => {
+    if (result !== undefined
+      && !session.resolved
+      && !session.transitioning
+      && !session.finishing) {
+      completeSession(context, result)
+    }
+  })
+}
+
+async function startNewGame(context: PlaySessionContext): Promise<void> {
+  const { session, runner, startTimer } = context
+  session.transitioning = true
+
+  try {
+    const winResult = await waitForWinPersistence(session)
+    if (winResult !== undefined) {
+      completeSession(context, winResult)
+      return
+    }
+
+    if (session.resolved) return
+
+    session.pendingWin = undefined
+    session.currentState = createGame(session.currentState.difficulty)
+    session.transitioning = false
+    startTimer()
+
+    const queuedKey = session.queuedKey
+    session.queuedKey = undefined
+    if (queuedKey !== undefined) {
+      processSessionKey(queuedKey, context)
+      return
+    }
+
+    runner().draw()
+  } catch (error) {
+    completeSession(context, playErrorResult(error))
+  }
+}
+
+function beginQuit(context: PlaySessionContext, state: GameState): void {
+  const { session, runner } = context
+  if (session.resolved || session.finishing) return
+
+  session.finishing = true
+  if (session.timerInterval) clearInterval(session.timerInterval)
+  runner().cleanup()
+  void finishQuit(context, state)
+}
+
+async function finishQuit(
+  context: PlaySessionContext,
+  state: GameState,
+): Promise<void> {
+  try {
+    const winResult = await waitForWinPersistence(context.session)
+    if (winResult !== undefined) {
+      completeSession(context, winResult)
+      return
+    }
+
+    if (context.session.resolved) return
+    const result = await handleQuit(state, context.persistence)
+    completeSession(context, result)
+  } catch (error) {
+    completeSession(context, playErrorResult(error))
+  }
+}
+
+function waitForWinPersistence(session: PlaySessionState): Promise<PlayCommandResult | undefined> {
+  return Promise.resolve(session.pendingWin)
+}
+
+function completeSession(
+  context: PlaySessionContext,
+  result: PlayCommandResult,
+): void {
+  const { session, runner, resolve } = context
+  if (session.resolved) return
+
+  session.resolved = true
+  session.transitioning = false
+  session.finishing = false
+  if (session.timerInterval) clearInterval(session.timerInterval)
+  runner().cleanup()
+  resolve(result)
+}
 
 /**
  * Handle win: evaluate achievements, merge stats, save state.
@@ -303,58 +474,69 @@ async function handleWin(
   state: GameState,
   persistence: PlayPersistence,
 ): Promise<PlayCommandResult> {
-  try {
-    const stats = getStats(state)
-    const savedState = await loadState(persistence.fs, persistence.statePath, persistence.lock)
+  const stats = getStats(state)
+  const update = await updateState(
+    persistence.fs,
+    persistence.statePath,
+    persistence.lock,
+    (savedState) => {
+      // Merge stats for win
+      const prevStats = savedState.stats[state.difficulty]
+      const newStats = mergeStats(
+        prevStats,
+        { elapsedMs: stats.elapsedMs, moveCount: stats.moveCount },
+        'win',
+      )
 
-    // Merge stats for win
-    const prevStats = savedState.stats[state.difficulty]
-    const newStats = mergeStats(
-      prevStats,
-      { elapsedMs: stats.elapsedMs, moveCount: stats.moveCount },
-      'win',
-    )
+      // Evaluate achievements
+      const perDifficultyWins: Record<string, number> = {}
+      const difficultiesWon: string[] = []
 
-    // Evaluate achievements
-    const perDifficultyWins: Record<string, number> = {}
-    const difficultiesWon: string[] = []
-
-    for (const [diff, s] of Object.entries(savedState.stats)) {
-      perDifficultyWins[diff] = s.totalWins
-      if (s.totalWins > 0) {
-        difficultiesWon.push(diff)
+      for (const [diff, s] of Object.entries(savedState.stats)) {
+        perDifficultyWins[diff] = s.totalWins
+        if (s.totalWins > 0) {
+          difficultiesWon.push(diff)
+        }
       }
-    }
 
-    const ctx = {
-      difficulty: state.difficulty,
-      elapsedMs: stats.elapsedMs,
-      moveCount: stats.moveCount,
-      hintCount: state.hintCount,
-      undoCount: state.undoCount,
-      errors: [] as readonly string[],
-      perDifficultyWins: perDifficultyWins as Record<DifficultyType, number>,
-      difficultiesWon: difficultiesWon as DifficultyType[],
-    }
+      const ctx = {
+        difficulty: state.difficulty,
+        elapsedMs: stats.elapsedMs,
+        moveCount: stats.moveCount,
+        hintCount: state.hintCount,
+        undoCount: state.undoCount,
+        errors: [] as readonly string[],
+        perDifficultyWins: perDifficultyWins as Record<DifficultyType, number>,
+        difficultiesWon: difficultiesWon as DifficultyType[],
+      }
 
-    const newAchievements = evaluateAchievements(ctx)
+      const newAchievements = evaluateAchievements(ctx)
 
-    // Unlock achievements and update stats
-    const stateWithAchievements = unlockAchievements(savedState, newAchievements)
-    const newState = {
-      ...stateWithAchievements,
-      stats: {
-        ...stateWithAchievements.stats,
-        [state.difficulty]: newStats,
-      },
-    }
+      // Unlock achievements and update stats
+      const stateWithAchievements = unlockAchievements(savedState, newAchievements)
+      const newState = {
+        ...stateWithAchievements,
+        stats: {
+          ...stateWithAchievements.stats,
+          [state.difficulty]: newStats,
+        },
+      }
 
-    await saveState(persistence.fs, persistence.statePath, newState, persistence.lock)
+      return {
+        state: newState,
+        result: {
+          newAchievements,
+          totalUnlocked: Object.keys(newState.achievements).length,
+        },
+      }
+    },
+  )
 
-    const totalUnlocked = Object.keys(newState.achievements).length
-    return { kind: 'play_exit', reason: 'won', newAchievements, totalUnlocked }
-  } catch {
-    return { kind: 'play_exit', reason: 'won' }
+  return {
+    kind: 'play_exit',
+    reason: 'won',
+    newAchievements: update.newAchievements,
+    totalUnlocked: update.totalUnlocked,
   }
 }
 
@@ -369,18 +551,20 @@ async function handleQuit(
   state: GameState,
   persistence: PlayPersistence,
 ): Promise<PlayCommandResult> {
-  try {
-    if (state.moveCount > 0) {
-      const saveId = await saveGame(persistence.fs, state, persistence.savesDir)
-      const savedState = await loadState(persistence.fs, persistence.statePath, persistence.lock)
-      const newState = { ...savedState, lastSaveId: saveId }
-      await saveState(persistence.fs, persistence.statePath, newState, persistence.lock)
-    }
-
-    return { kind: 'play_exit', reason: 'quit' }
-  } catch {
-    return { kind: 'play_exit', reason: 'quit' }
+  if (state.moveCount > 0) {
+    const saveId = await saveGame(persistence.fs, state, persistence.savesDir)
+    await updateState(
+      persistence.fs,
+      persistence.statePath,
+      persistence.lock,
+      (savedState) => ({
+        state: { ...savedState, lastSaveId: saveId },
+        result: undefined,
+      }),
+    )
   }
+
+  return { kind: 'play_exit', reason: 'quit' }
 }
 
 // ---------------------------------------------------------------------------
@@ -397,21 +581,22 @@ async function mergeStartStats(
   persistence: PlayPersistence,
   difficulty: DifficultyType,
 ): Promise<void> {
-  try {
-    const savedState = await loadState(persistence.fs, persistence.statePath, persistence.lock)
-    const newStats = mergeStats(savedState.stats[difficulty], {}, 'start')
-    const newState = {
-      ...savedState,
-      stats: {
-        ...savedState.stats,
-        [difficulty]: newStats,
+  await updateState(
+    persistence.fs,
+    persistence.statePath,
+    persistence.lock,
+    (savedState) => ({
+      state: {
+        ...savedState,
+        stats: {
+          ...savedState.stats,
+          [difficulty]: mergeStats(savedState.stats[difficulty], {}, 'start'),
+        },
+        totalPlays: savedState.totalPlays + 1,
       },
-      totalPlays: savedState.totalPlays + 1,
-    }
-    await saveState(persistence.fs, persistence.statePath, newState, persistence.lock)
-  } catch {
-    // Ignore stat merge errors — game can still be played
-  }
+      result: undefined,
+    }),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -425,29 +610,23 @@ async function mergeStartStats(
  * @returns A new GameState ready for play.
  */
 function stateFromSave(save: SaveFile): GameState {
-  const original = deserializeBoard(save.original)
-  const solution = deserializeBoard(save.solution)
-  const board = deserializeBoard(save.current)
+  const original = deserializeSavedBoard(save.original)
+  const solution = deserializeSavedBoard(save.solution)
+  const board = deserializeSavedBoard(save.current)
   const readOnly = original.map((row: readonly number[]) =>
     row.map((val) => val !== 0),
   )
 
   return {
-    board,
-    solution,
-    original,
-    readOnly,
-    difficulty: save.difficulty,
-    cursor: save.cursor,
-    status: 'playing',
-    winView: 'menu',
-    history: save.history,
-    moveCount: save.moveCount,
-    hintCount: save.hintCount,
-    undoCount: save.undoCount,
-    errorCount: 0,
-    startedAt: save.startTime,
+    board, solution, original, readOnly,
+    difficulty: save.difficulty, cursor: save.cursor, status: 'playing', winView: 'menu',
+    history: save.history, moveCount: save.moveCount, hintCount: save.hintCount,
+    undoCount: save.undoCount, errorCount: 0, startedAt: save.startTime,
   }
+}
+
+function deserializeSavedBoard(serialized: string): BoardType {
+  return deserializeBoard(serialized) as BoardType
 }
 
 // ---------------------------------------------------------------------------
@@ -461,13 +640,9 @@ function stateFromSave(save: SaveFile): GameState {
  */
 export function defaultPlayIO(): PlayIO {
   return {
-    stdout: (s: string) => {
-      process.stdout.write(s.endsWith('\n') ? s : `${s}\n`)
-    },
-    stderr: (s: string) => {
-      process.stderr.write(s.endsWith('\n') ? s : `${s}\n`)
-    },
-    exit: (code: number) => process.exit(code) as never,
+    stdout: (s: string) => void process.stdout.write(s.endsWith('\n') ? s : `${s}\n`),
+    stderr: (s: string) => void process.stderr.write(s.endsWith('\n') ? s : `${s}\n`),
+    exit: (code: number) => process.exit(code),
     createTuiSession: (opts) => runTuiSession(opts),
   }
 }
@@ -479,10 +654,8 @@ export function defaultPlayIO(): PlayIO {
  */
 export function defaultPlayPersistence(): PlayPersistence {
   return {
-    fs: nodeFsAdapter,
-    lock: nodeLockFactory(defaultStateLockPath()),
-    statePath: defaultStatePath(),
-    savesDir: defaultSavesDir(),
+    fs: nodeFsAdapter, lock: nodeLockFactory(defaultStateLockPath()),
+    statePath: defaultStatePath(), savesDir: defaultSavesDir(),
   }
 }
 
@@ -493,9 +666,7 @@ export function defaultPlayPersistence(): PlayPersistence {
  */
 export function memoryPlayPersistence(): PlayPersistence {
   return {
-    fs: memoryFsAdapter(),
-    lock: inMemoryLockFactory(),
-    statePath: '/test/state.json',
-    savesDir: '/test/saves',
+    fs: memoryFsAdapter(), lock: inMemoryLockFactory(),
+    statePath: '/test/state.json', savesDir: '/test/saves',
   }
 }

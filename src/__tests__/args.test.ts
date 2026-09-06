@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { parseArgs, HELP_TEXT, HELP_TEXT_BY_NAME } from '../args.js'
 
 const BOARD = '1'.repeat(81)

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { hintCommand, hintContract } from '../../commands/hint.js'
 
 // A valid solved board (no empty cells) → hint should report no hint available.
@@ -70,7 +71,10 @@ describe('hintContract', () => {
     })
     it('returns error on unknown option', () => {
       const r = hintContract.parse(['--frobnicate'])
-      expect(r).toEqual({ ok: false, message: expect.stringContaining('Unknown option') })
+      expect(r.ok).toBe(false)
+      if (r.ok === false) {
+        expect(r.message).toContain('Unknown option')
+      }
     })
     it('returns error when board missing', () => {
       const r = hintContract.parse([])
@@ -80,7 +84,7 @@ describe('hintContract', () => {
 
   describe('run', () => {
     it('delegates to hintCommand and returns the result', async () => {
-      const result = await hintContract.run({ board: BOARD } as never, {} as never)
+      const result = await hintContract.run({ board: BOARD }, {} as never)
       expect(result.kind).toBe('no_hint')
     })
   })

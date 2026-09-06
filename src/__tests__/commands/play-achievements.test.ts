@@ -1,9 +1,15 @@
 import { describe, it, expect } from 'vitest'
+
 import { playAchievementsCommand } from '../../commands/play-achievements.js'
-import { memoryFsAdapter, saveState } from '../../persistence/state.js'
-import type { StateFile } from '../../persistence/state.js'
-import { inMemoryLockFactory } from '../../persistence/lock.js'
 import { ACHIEVEMENTS } from '../../persistence/achievements.js'
+import { inMemoryLockFactory } from '../../persistence/lock.js'
+import {
+  StateCorruptError,
+  loadState,
+  memoryFsAdapter,
+  saveState,
+} from '../../persistence/state.js'
+import type { StateFile } from '../../persistence/state.js'
 
 describe('playAchievementsCommand', () => {
   it('returns all 11 locked when no state file exists', async () => {
@@ -101,6 +107,24 @@ describe('playAchievementsCommand', () => {
 
     expect(result.lines).toContain('11/11 unlocked')
     expect(result.lines).not.toContain('Locked:')
+  })
+
+  it('rejects an unknown persisted achievement id as corrupt', async () => {
+    const fs = memoryFsAdapter()
+    const lock = inMemoryLockFactory()
+    const statePath = '/test/state.json'
+    const state = await loadState(fs, statePath, lock)
+
+    await saveState(fs, statePath, {
+      ...state,
+      achievements: {
+        legacy_achievement: { unlockedAt: '2026-01-01T00:00:00.000Z' },
+      } as unknown as StateFile['achievements'],
+    }, lock)
+
+    await expect(
+      playAchievementsCommand({ fs, lock, statePath }),
+    ).rejects.toBeInstanceOf(StateCorruptError)
   })
 
   it('works with default deps', async () => {

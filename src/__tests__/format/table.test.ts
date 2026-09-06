@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { displayWidth, formatTable } from '../../format/table.js'
 
 describe('displayWidth', () => {

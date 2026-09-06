@@ -1,4 +1,6 @@
-import { deserializeBoard, type BoardType } from '@hackettyam/sudoku-tools'
+import type { BoardType } from '@hackettyam/sudoku-tools'
+
+import { deserializeBoard } from '../sudoku-tools.js'
 import { BOARD_LENGTH } from './constants.js'
 
 /**
@@ -16,8 +18,11 @@ export function normalizeBoardString(input: string): string {
   const cleaned = input.replace(/\s+/g, '')
 
   if (cleaned.length !== BOARD_LENGTH) {
+    const expectedLength = String(BOARD_LENGTH)
+    const actualLength = String(cleaned.length)
     throw new Error(
-      `Board string must be exactly ${BOARD_LENGTH} characters after whitespace removal; got ${cleaned.length}.`,
+      `Board string must be exactly ${expectedLength} characters after whitespace removal; `
+      + `got ${actualLength}.`,
     )
   }
 

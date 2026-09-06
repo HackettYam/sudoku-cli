@@ -1,9 +1,21 @@
-import { describe, it, expect } from 'vitest'
-import { playStatsCommand } from '../../commands/play-stats.js'
-import { memoryFsAdapter, saveState } from '../../persistence/state.js'
-import type { StateFile } from '../../persistence/state.js'
-import { inMemoryLockFactory } from '../../persistence/lock.js'
 import { Difficulty } from '@hackettyam/sudoku-tools'
+import { describe, it, expect } from 'vitest'
+
+import { playStatsCommand } from '../../commands/play-stats.js'
+import { inMemoryLockFactory } from '../../persistence/lock.js'
+import {
+  StateCorruptError,
+  loadState,
+  memoryFsAdapter,
+  saveState,
+} from '../../persistence/state.js'
+import type { StateFile } from '../../persistence/state.js'
+
+function expectOutputToContain(output: string, expected: readonly string[]): void {
+  for (const value of expected) {
+    expect(output).toContain(value)
+  }
+}
 
 describe('playStatsCommand', () => {
   it('returns stats with default state when no state file exists', async () => {
@@ -74,34 +86,22 @@ describe('playStatsCommand', () => {
     const output = result.lines.join('\n')
 
     // Novice: 10 plays, 7 wins, 70% win rate
-    expect(output).toContain('novice')
-    expect(output).toContain('Plays: 10')
-    expect(output).toContain('Wins: 7')
-    expect(output).toContain('Win rate: 70%')
-    expect(output).toContain('Fewest moves: 30')
+    expectOutputToContain(output, ['novice', 'Plays: 10', 'Wins: 7', 'Win rate: 70%', 'Fewest moves: 30'])
 
     // Easy: 5 plays, 5 wins, 100% win rate
-    expect(output).toContain('easy')
-    expect(output).toContain('Plays: 5')
-    expect(output).toContain('Wins: 5')
-    expect(output).toContain('Win rate: 100%')
+    expectOutputToContain(output, ['easy', 'Plays: 5', 'Wins: 5', 'Win rate: 100%'])
 
     // Normal: 3 plays, 1 win, 33% win rate (Math.round(1/3*100) = 33)
-    expect(output).toContain('normal')
-    expect(output).toContain('Plays: 3')
-    expect(output).toContain('Wins: 1')
-    expect(output).toContain('Win rate: 33%')
+    expectOutputToContain(output, ['normal', 'Plays: 3', 'Wins: 1', 'Win rate: 33%'])
 
     // Hard: 2 plays, 0 wins, no best time
-    expect(output).toContain('hard')
-    expect(output).toContain('Plays: 2')
-    expect(output).toContain('Wins: 0')
-    expect(output).toContain('Win rate: 0%')
-    expect(output).toContain('Best time: --:--')
-    expect(output).toContain('Fewest moves: --')
+    expectOutputToContain(output, [
+      'hard', 'Plays: 2', 'Wins: 0', 'Win rate: 0%',
+      'Best time: --:--', 'Fewest moves: --',
+    ])
 
     // Total
-    expect(output).toContain('Total plays: 20')
+    expectOutputToContain(output, ['Total plays: 20'])
   })
 
   it('formats best time correctly', async () => {
@@ -134,6 +134,24 @@ describe('playStatsCommand', () => {
 
     // 65000ms = 1:05 (formatTime pads minutes to 2 digits)
     expect(output).toContain('Best time: 01:05')
+  })
+
+  it('rejects a missing difficulty entry as corrupt', async () => {
+    const fs = memoryFsAdapter()
+    const lock = inMemoryLockFactory()
+    const statePath = '/test/state.json'
+    const state = await loadState(fs, statePath, lock)
+    const expertKey: string = Difficulty.Expert
+    const sparseStats = Object.fromEntries(
+      Object.entries(state.stats).filter(([difficulty]) => difficulty !== expertKey),
+    ) as StateFile['stats']
+    const sparseState: StateFile = { ...state, stats: sparseStats }
+
+    await saveState(fs, statePath, sparseState, lock)
+
+    await expect(
+      playStatsCommand({ fs, lock, statePath }),
+    ).rejects.toBeInstanceOf(StateCorruptError)
   })
 
   it('works with default deps', async () => {

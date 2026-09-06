@@ -1,5 +1,5 @@
+import type { CommandContract, OptionDef, PositionalDef } from './commands/contract.js'
 import { commands, commandsByName, type CommandName } from './commands/index.js'
-import type { CommandContract } from './commands/contract.js'
 
 /**
  * Discriminated union over the registry.
@@ -29,13 +29,20 @@ function padEnd(s: string, width: number): string {
  * Options with a `string` type get a placeholder shown in help text.
  * Most options use the generic `<value>`; a few are named for clarity.
  */
-function getOptionPlaceholder(name: string, def: { type: 'string' | 'boolean' }): string | undefined {
+function getOptionPlaceholder(name: string, def: OptionDef): string | undefined {
   if (def.type === 'boolean') return undefined
   const placeholders: Readonly<Record<string, string>> = {
     difficulty: '<level>',
     load: '<id>',
   }
   return placeholders[name] ?? '<value>'
+}
+
+/** Format a positional argument for a usage line. */
+function formatPositional(positional: PositionalDef): string {
+  const opening = positional.required ? '<' : '[<'
+  const closing = positional.required ? '>' : '>]'
+  return `${opening}${positional.name}${closing}`
 }
 
 /** Format the "name [options/positional]" portion of a top-level help row. */
@@ -49,9 +56,7 @@ function formatName(contract: CommandContract<unknown>): string {
   const parts: string[] = [contract.name]
 
   if (contract.positional !== undefined) {
-    const wrap = contract.positional.required ? '<' : '[<'
-    const close = contract.positional.required ? '>' : '>]'
-    parts.push(`${wrap}${contract.positional.name}${close}`)
+    parts.push(formatPositional(contract.positional))
   }
 
   for (const [optName, optDef] of userOptions) {
@@ -64,6 +69,61 @@ function formatName(contract: CommandContract<unknown>): string {
   }
 
   return parts.join(' ')
+}
+
+/** Format the usage line for a command-specific help page. */
+function formatCommandUsage(contract: CommandContract<unknown>): string {
+  const usageParts: string[] = [contract.name]
+
+  if (contract.positional !== undefined) {
+    usageParts.push(formatPositional(contract.positional))
+  }
+  if (Object.keys(contract.options).length > 0) {
+    usageParts.push('[options]')
+  }
+
+  return `Usage: sudoku-cli ${usageParts.join(' ')}`
+}
+
+/** Append an optional command description to help lines. */
+function appendDescription(lines: string[], contract: CommandContract<unknown>): void {
+  if (contract.description === undefined) {
+    return
+  }
+  lines.push('', contract.description)
+}
+
+/** Append the user-facing option table to help lines. */
+function appendOptionHelp(lines: string[], contract: CommandContract<unknown>): void {
+  const userOptions = Object.entries(contract.options).filter(([name]) => name !== 'help')
+  if (userOptions.length === 0) {
+    return
+  }
+
+  lines.push('', 'Options:')
+  for (const [optName, optDef] of userOptions) {
+    const placeholder = getOptionPlaceholder(optName, optDef)
+    const valueSuffix = optDef.type === 'string' && placeholder !== undefined ? ` ${placeholder}` : ''
+    const longFlag = `--${optName}${valueSuffix}`
+    lines.push(`  ${padEnd(longFlag, 24)}${optDef.desc}`)
+  }
+}
+
+/** Append the standard short help option, when one is defined. */
+function appendHelpOption(lines: string[], contract: CommandContract<unknown>): void {
+  const helpOpt = contract.options.help
+  if (helpOpt === undefined || helpOpt.short === undefined) {
+    return
+  }
+  lines.push(`  ${padEnd('-' + helpOpt.short + ', --help', 24)}${helpOpt.desc}`)
+}
+
+/** Append an optional command footer to help lines. */
+function appendFooter(lines: string[], contract: CommandContract<unknown>): void {
+  if (contract.footer === undefined) {
+    return
+  }
+  lines.push('', contract.footer)
 }
 
 /**
@@ -101,47 +161,12 @@ export function renderTopHelp(cmds: readonly CommandContract<unknown>[]): string
  * @see requirements.md AC-5
  */
 export function renderCommandHelp(contract: CommandContract<unknown>): string {
-  const lines: string[] = []
+  const lines: string[] = [formatCommandUsage(contract)]
 
-  // Usage line: "Usage: sudoku-cli <name> [positional] [options]"
-  const usageParts: string[] = [contract.name]
-  if (contract.positional !== undefined) {
-    const wrap = contract.positional.required ? '<' : '[<'
-    const close = contract.positional.required ? '>' : '>]'
-    usageParts.push(`${wrap}${contract.positional.name}${close}`)
-  }
-  if (Object.keys(contract.options).length > 0) {
-    usageParts.push('[options]')
-  }
-  lines.push(`Usage: sudoku-cli ${usageParts.join(' ')}`)
-
-  if (contract.description !== undefined) {
-    lines.push('')
-    lines.push(contract.description)
-  }
-
-  const userOptions = Object.entries(contract.options).filter(([n]) => n !== 'help')
-  if (userOptions.length > 0) {
-    lines.push('')
-    lines.push('Options:')
-    for (const [optName, optDef] of userOptions) {
-      const placeholder = getOptionPlaceholder(optName, optDef)
-      const valueSuffix = optDef.type === 'string' && placeholder !== undefined ? ` ${placeholder}` : ''
-      const longFlag = `--${optName}${valueSuffix}`
-      const padded = padEnd(longFlag, 24)
-      lines.push(`  ${padded}${optDef.desc}`)
-    }
-  }
-
-  const helpOpt = contract.options.help
-  if (helpOpt !== undefined && helpOpt.short !== undefined) {
-    lines.push(`  ${padEnd(`-${helpOpt.short}, --help`, 24)}${helpOpt.desc}`)
-  }
-
-  if (contract.footer !== undefined) {
-    lines.push('')
-    lines.push(contract.footer)
-  }
+  appendDescription(lines, contract)
+  appendOptionHelp(lines, contract)
+  appendHelpOption(lines, contract)
+  appendFooter(lines, contract)
 
   return lines.join('\n') + '\n'
 }
@@ -181,7 +206,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   if (result.ok === 'help') {
     return {
       kind: 'cmd_help',
-      command: name as CommandName,
+      command: name,
       helpText: renderCommandHelp(contract),
     }
   }
@@ -190,7 +215,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     return { kind: 'error', message: result.message }
   }
 
-  return { kind: 'cmd', command: name as CommandName, args: result.args }
+  return { kind: 'cmd', command: name, args: result.args }
 }
 
 /** Top-level usage text, printed for `--help` and on error. */

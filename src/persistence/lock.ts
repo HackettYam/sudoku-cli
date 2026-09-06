@@ -35,6 +35,7 @@ export function createLock(
   const stale = options?.stale ?? 5000
   let heldCount = 0
   let releaseFn: (() => Promise<void>) | null = null
+  let activeHandle: LockHandle | null = null
 
   async function acquire(): Promise<LockResult> {
     if (heldCount > 0) {
@@ -53,20 +54,29 @@ export function createLock(
         realpath: false,
       })
 
+      const handle: LockHandle = { __brand: 'LockHandle' }
       releaseFn = release
-      heldCount++
+      activeHandle = handle
+      heldCount = 1
 
-      return { ok: true, handle: { __brand: 'LockHandle' } }
+      return { ok: true, handle }
     } catch {
       return { ok: false, reason: maxRetries === 0 ? 'timeout' : 'busy' }
     }
   }
 
-  async function release(_handle: LockHandle): Promise<void> {
-    if (heldCount > 0 && releaseFn !== null) {
-      await releaseFn()
-      releaseFn = null
-      heldCount--
+  async function release(handle: LockHandle): Promise<void> {
+    if (heldCount === 0 || releaseFn === null || activeHandle !== handle) return
+
+    const releaseLock = releaseFn
+    try {
+      await releaseLock()
+    } finally {
+      if (activeHandle === handle && releaseFn === releaseLock) {
+        releaseFn = null
+        activeHandle = null
+        heldCount = 0
+      }
     }
   }
 
@@ -95,19 +105,28 @@ export function nodeLockFactory(path: string): LockFactory {
 export function inMemoryLockFactory(): LockFactory {
   const locked = new Set<string>()
   const key = '__in_memory_lock__'
+  let activeHandle: LockHandle | null = null
 
-  async function acquire(): Promise<LockResult> {
+  function acquire(): Promise<LockResult> {
     if (locked.has(key)) {
-      return { ok: false, reason: 'busy' }
+      return Promise.resolve({ ok: false, reason: 'busy' })
     }
 
+    const handle: LockHandle = { __brand: 'LockHandle' }
     locked.add(key)
+    activeHandle = handle
 
-    return { ok: true, handle: { __brand: 'LockHandle' } }
+    return Promise.resolve({ ok: true, handle })
   }
 
-  async function release(_handle: LockHandle): Promise<void> {
+  function release(handle: LockHandle): Promise<void> {
+    if (activeHandle !== handle) {
+      return Promise.resolve()
+    }
+
     locked.delete(key)
+    activeHandle = null
+    return Promise.resolve()
   }
 
   function held(): number {

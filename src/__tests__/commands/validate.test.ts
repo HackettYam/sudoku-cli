@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { validateCommand, validateContract } from '../../commands/validate.js'
 
 const VALID = '123456789456789123789123456234567891567891234891234567345678912678912345912345678'
@@ -46,7 +47,10 @@ describe('validateContract', () => {
     })
     it('returns error on unknown option', () => {
       const r = validateContract.parse(['--frobnicate'])
-      expect(r).toEqual({ ok: false, message: expect.stringContaining('Unknown option') })
+      expect(r.ok).toBe(false)
+      if (r.ok === false) {
+        expect(r.message).toContain('Unknown option')
+      }
     })
     it('returns error when board missing', () => {
       const r = validateContract.parse([])
@@ -56,7 +60,7 @@ describe('validateContract', () => {
 
   describe('run', () => {
     it('delegates to validateCommand and returns a valid result', async () => {
-      const result = await validateContract.run({ board: VALID } as never, {} as never)
+      const result = await validateContract.run({ board: VALID }, {} as never)
       expect(result).toEqual({ kind: 'valid' })
     })
   })

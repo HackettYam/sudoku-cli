@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { ExitCode } from '../../commands/result.js'
 
 describe('ExitCode', () => {

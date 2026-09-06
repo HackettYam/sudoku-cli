@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { shouldEnableColors, colors } from '../../format/colors.js'
 
 describe('shouldEnableColors', () => {

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
-import { parseDifficulty, difficultyToName, DEFAULT_DIFFICULTY } from '../../format/difficulty.js'
 import { Difficulty } from '@hackettyam/sudoku-tools'
+import { describe, expect, it } from 'vitest'
+
+import { parseDifficulty, difficultyToName, DEFAULT_DIFFICULTY } from '../../format/difficulty.js'
 
 describe('parseDifficulty', () => {
   it('returns default when input is undefined', () => {

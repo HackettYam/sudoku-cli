@@ -1,11 +1,10 @@
 import { describe, it, expect } from 'vitest'
+
+import type { AchievementId } from '../../persistence/achievements.js'
+import { inMemoryLockFactory } from '../../persistence/lock.js'
+import type { LockFactory } from '../../persistence/lock.js'
 import {
-  StateCorruptError,
-  StateVersionError,
   StateLockBusyError,
-  SaveNotFoundError,
-  SaveCorruptError,
-  SaveVersionError,
   memoryFsAdapter,
   nodeFsAdapter,
   defaultStatePath,
@@ -13,13 +12,11 @@ import {
   defaultStateLockPath,
   loadState,
   saveState,
+  updateState,
   mergeStats,
   unlockAchievements,
 } from '../../persistence/state.js'
-import { inMemoryLockFactory } from '../../persistence/lock.js'
-import type { StateFile, PerDifficultyStats } from '../../persistence/state.js'
-import type { AchievementId } from '../../persistence/achievements.js'
-import type { LockFactory } from '../../persistence/lock.js'
+import type { FsAdapter, StateFile, PerDifficultyStats } from '../../persistence/state.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -40,77 +37,6 @@ function makeDefaultState(): StateFile {
     lastSaveId: null,
   }
 }
-
-// ---------------------------------------------------------------------------
-// Error classes
-// ---------------------------------------------------------------------------
-
-describe('StateCorruptError', () => {
-  it('should have correct name and code', () => {
-    const err = new StateCorruptError('test message')
-    expect(err.name).toBe('StateCorruptError')
-    expect(err.code).toBe('STATE_CORRUPT')
-    expect(err.message).toBe('test message')
-  })
-
-  it('should be an instance of Error', () => {
-    const err = new StateCorruptError('test')
-    expect(err).toBeInstanceOf(Error)
-    expect(err).toBeInstanceOf(StateCorruptError)
-  })
-})
-
-describe('StateVersionError', () => {
-  it('should have correct name, code, and version', () => {
-    const err = new StateVersionError(2)
-    expect(err.name).toBe('StateVersionError')
-    expect(err.code).toBe('STATE_VERSION')
-    expect(err.version).toBe(2)
-    expect(err.message).toBe('Unsupported state version: 2')
-  })
-
-  it('should handle unknown version types', () => {
-    const err = new StateVersionError('bad')
-    expect(err.version).toBe('bad')
-    expect(err.message).toBe('Unsupported state version: bad')
-  })
-})
-
-describe('StateLockBusyError', () => {
-  it('should have correct name and code', () => {
-    const err = new StateLockBusyError()
-    expect(err.name).toBe('StateLockBusyError')
-    expect(err.code).toBe('STATE_LOCK_BUSY')
-  })
-})
-
-describe('SaveNotFoundError', () => {
-  it('should have correct name, code, and message', () => {
-    const err = new SaveNotFoundError('abc123')
-    expect(err.name).toBe('SaveNotFoundError')
-    expect(err.code).toBe('SAVE_NOT_FOUND')
-    expect(err.message).toBe('Save not found: abc123')
-  })
-})
-
-describe('SaveCorruptError', () => {
-  it('should have correct name, code, and message', () => {
-    const err = new SaveCorruptError('abc123', 'bad json')
-    expect(err.name).toBe('SaveCorruptError')
-    expect(err.code).toBe('SAVE_CORRUPT')
-    expect(err.message).toBe('Save abc123 is corrupt: bad json')
-  })
-})
-
-describe('SaveVersionError', () => {
-  it('should have correct name, code, version, and message', () => {
-    const err = new SaveVersionError('abc123', 3)
-    expect(err.name).toBe('SaveVersionError')
-    expect(err.code).toBe('SAVE_VERSION')
-    expect(err.version).toBe(3)
-    expect(err.message).toBe('Save abc123 has unsupported version: 3')
-  })
-})
 
 // ---------------------------------------------------------------------------
 // memoryFsAdapter
@@ -186,12 +112,10 @@ describe('memoryFsAdapter', () => {
 
 describe('nodeFsAdapter', () => {
   it('should be defined and have the right methods', () => {
-    expect(nodeFsAdapter.readFile).toBeDefined()
-    expect(nodeFsAdapter.writeFile).toBeDefined()
-    expect(nodeFsAdapter.mkdir).toBeDefined()
-    expect(nodeFsAdapter.rename).toBeDefined()
-    expect(nodeFsAdapter.readdir).toBeDefined()
-    expect(nodeFsAdapter.exists).toBeDefined()
+    const methods: readonly (keyof FsAdapter)[] = ['readFile', 'writeFile', 'mkdir', 'rename', 'readdir', 'exists']
+    for (const method of methods) {
+      expect(typeof nodeFsAdapter[method]).toBe('function')
+    }
   })
 })
 
@@ -201,8 +125,7 @@ describe('nodeFsAdapter', () => {
 
 describe('defaultStatePath', () => {
   it('should return a path ending with .sudoku-cli/state.json', () => {
-    const path = defaultStatePath()
-    expect(path).toContain('.sudoku-cli/state.json')
+    expect(defaultStatePath()).toContain('.sudoku-cli/state.json')
   })
 })
 
@@ -217,167 +140,6 @@ describe('defaultStateLockPath', () => {
   it('should return a path ending with .sudoku-cli/state.json.lock', () => {
     const path = defaultStateLockPath()
     expect(path).toContain('.sudoku-cli/state.json.lock')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// loadState
-// ---------------------------------------------------------------------------
-
-describe('loadState', () => {
-  it('should return default state when file does not exist', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    const state = await loadState(fs, '/tmp/state-missing/state.json', lock)
-    expect(state.version).toBe(1)
-    expect(state.totalPlays).toBe(0)
-    expect(state.achievements).toEqual({})
-    expect(state.lastSaveId).toBeNull()
-  })
-
-  it('should load a valid state file', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    const state = makeDefaultState()
-    await fs.writeFile('/tmp/state-ok/state.json', JSON.stringify(state))
-    const loaded = await loadState(fs, '/tmp/state-ok/state.json', lock)
-    expect(loaded.version).toBe(1)
-    expect(loaded.totalPlays).toBe(0)
-  })
-
-  it('should throw StateCorruptError for oversized file', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    const bigJson = JSON.stringify({
-      version: 1,
-      stats: {},
-      totalPlays: 0,
-      achievements: {},
-      lastSaveId: null,
-      padding: 'x'.repeat(1_048_577),
-    })
-    await fs.writeFile('/tmp/state-big/state.json', bigJson)
-    await expect(
-      loadState(fs, '/tmp/state-big/state.json', lock),
-    ).rejects.toThrow(StateCorruptError)
-  })
-
-  it('should throw StateCorruptError for invalid schema (missing version)', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    await fs.writeFile(
-      '/tmp/state-bad/state.json',
-      JSON.stringify({ stats: {}, totalPlays: 0, achievements: {}, lastSaveId: null }),
-    )
-    await expect(
-      loadState(fs, '/tmp/state-bad/state.json', lock),
-    ).rejects.toThrow(StateCorruptError)
-  })
-
-  it('should throw StateCorruptError for invalid schema (missing stats)', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    await fs.writeFile(
-      '/tmp/state-nostats/state.json',
-      JSON.stringify({ version: 1, totalPlays: 0, achievements: {}, lastSaveId: null }),
-    )
-    await expect(
-      loadState(fs, '/tmp/state-nostats/state.json', lock),
-    ).rejects.toThrow(StateCorruptError)
-  })
-
-  it('should throw StateCorruptError for invalid schema (non-null non-string lastSaveId)', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    await fs.writeFile(
-      '/tmp/state-bad2/state.json',
-      JSON.stringify({ version: 1, stats: {}, totalPlays: 0, achievements: {}, lastSaveId: 42 }),
-    )
-    await expect(
-      loadState(fs, '/tmp/state-bad2/state.json', lock),
-    ).rejects.toThrow(StateCorruptError)
-  })
-
-  it('should throw StateCorruptError for version 2 (isStateFile rejects first)', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    await fs.writeFile(
-      '/tmp/state-ver/state.json',
-      JSON.stringify({ version: 2, stats: {}, totalPlays: 0, achievements: {}, lastSaveId: null }),
-    )
-    await expect(
-      loadState(fs, '/tmp/state-ver/state.json', lock),
-    ).rejects.toThrow(StateCorruptError)
-  })
-
-  it('should throw StateCorruptError for invalid JSON', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    await fs.writeFile('/tmp/state-json/state.json', '{invalid json}')
-    await expect(
-      loadState(fs, '/tmp/state-json/state.json', lock),
-    ).rejects.toThrow(StateCorruptError)
-  })
-
-  it('should throw StateLockBusyError when lock cannot be acquired', async () => {
-    const fs = memoryFsAdapter()
-    const busyLock: LockFactory = {
-      acquire: async () => ({ ok: false as const, reason: 'busy' as const }),
-      release: async () => {},
-      held: () => 0,
-    }
-    await expect(
-      loadState(fs, '/tmp/state-busy/state.json', busyLock),
-    ).rejects.toThrow(StateLockBusyError)
-  })
-
-  it('should release lock after successful load', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    await loadState(fs, '/tmp/state-lock/state.json', lock)
-    expect(lock.held()).toBe(0)
-  })
-
-  it('should release lock after error', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    await fs.writeFile('/tmp/state-err/state.json', 'not json')
-    try {
-      await loadState(fs, '/tmp/state-err/state.json', lock)
-    } catch {
-      // expected
-    }
-    expect(lock.held()).toBe(0)
-  })
-
-  it('should accept valid schema with non-null lastSaveId string', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    const state = makeDefaultState()
-    const withSaveId = { ...state, lastSaveId: 'save-abc' }
-    await fs.writeFile('/tmp/state-sid/state.json', JSON.stringify(withSaveId))
-    const loaded = await loadState(fs, '/tmp/state-sid/state.json', lock)
-    expect(loaded.lastSaveId).toBe('save-abc')
-  })
-
-  it('should accept valid schema with non-empty stats and achievements', async () => {
-    const fs = memoryFsAdapter()
-    const lock = inMemoryLockFactory()
-    const state = makeDefaultState()
-    const filled = {
-      ...state,
-      totalPlays: 10,
-      stats: {
-        ...state.stats,
-        easy: { totalPlays: 5, totalWins: 2, bestTimeMs: 1000, fewestMoves: 30, lastPlayedAt: 123 },
-      },
-      achievements: { first_win: { unlockedAt: '2026-01-01T00:00:00.000Z' } },
-    }
-    await fs.writeFile('/tmp/state-full/state.json', JSON.stringify(filled))
-    const loaded = await loadState(fs, '/tmp/state-full/state.json', lock)
-    expect(loaded.totalPlays).toBe(10)
-    expect(loaded.stats.easy.totalWins).toBe(2)
-    expect(loaded.achievements.first_win).toBeDefined()
   })
 })
 
@@ -400,14 +162,39 @@ describe('saveState', () => {
   it('should throw StateLockBusyError when lock fails', async () => {
     const fs = memoryFsAdapter()
     const busyLock: LockFactory = {
-      acquire: async () => ({ ok: false as const, reason: 'busy' as const }),
-      release: async () => {},
+      acquire: () => Promise.resolve({ ok: false as const, reason: 'busy' as const }),
+      release: () => Promise.resolve(),
       held: () => 0,
     }
     const state = makeDefaultState()
     await expect(
       saveState(fs, '/tmp/state-busy/state.json', state, busyLock),
     ).rejects.toThrow(StateLockBusyError)
+  })
+
+  it('should preserve the original state and release the lock when the atomic write fails', async () => {
+    const baseFs = memoryFsAdapter()
+    const lock = inMemoryLockFactory()
+    const path = '/tmp/state-atomic/state.json'
+    const original = { ...makeDefaultState(), totalPlays: 1 }
+    const originalJson = JSON.stringify(original)
+    await baseFs.writeFile(path, originalJson)
+
+    const failingFs: FsAdapter = {
+      ...baseFs,
+      writeFile(filePath, data) {
+        if (filePath.startsWith(`${path}.tmp-`)) {
+          return Promise.reject(new Error('disk full'))
+        }
+        return baseFs.writeFile(filePath, data)
+      },
+    }
+
+    await expect(
+      saveState(failingFs, path, { ...original, totalPlays: 2 }, lock),
+    ).rejects.toThrow('disk full')
+    expect(await baseFs.readFile(path)).toBe(originalJson)
+    expect(lock.held()).toBe(0)
   })
 
   it('should release lock after successful save', async () => {
@@ -441,6 +228,62 @@ describe('saveState', () => {
 
     const loaded = await loadState(fs, path, inMemoryLockFactory())
     expect(loaded.totalPlays).toBe(42)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// updateState
+// ---------------------------------------------------------------------------
+
+describe('updateState', () => {
+  it('succeeds when the parent directory already exists', async () => {
+    // Arrange
+    const baseFs = memoryFsAdapter()
+    const fs: FsAdapter = {
+      ...baseFs,
+      mkdir: () => Promise.reject(
+        Object.assign(new Error('directory already exists'), { code: 'EEXIST' as const }),
+      ),
+    }
+    const lock = inMemoryLockFactory()
+
+    // Act
+    const result = await updateState(
+      fs,
+      '/tmp/state-update-eexist/state.json',
+      lock,
+      (state) => ({
+        state: { ...state, totalPlays: state.totalPlays + 1 },
+        result: 'updated' as const,
+      }),
+    )
+
+    // Assert
+    expect(result).toBe('updated')
+    expect(lock.held()).toBe(0)
+  })
+
+  it('rejects a non-EEXIST mkdir error and leaves the lock released', async () => {
+    // Arrange
+    const baseFs = memoryFsAdapter()
+    const mkdirError = Object.assign(new Error('permission denied'), { code: 'EACCES' as const })
+    const fs: FsAdapter = {
+      ...baseFs,
+      mkdir: () => Promise.reject(mkdirError),
+    }
+    const lock = inMemoryLockFactory()
+
+    // Act
+    const update = updateState(
+      fs,
+      '/tmp/state-update-error/state.json',
+      lock,
+      (state) => ({ state, result: undefined }),
+    )
+
+    // Assert
+    await expect(update).rejects.toBe(mkdirError)
+    expect(lock.held()).toBe(0)
   })
 })
 

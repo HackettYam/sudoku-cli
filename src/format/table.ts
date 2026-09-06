@@ -22,6 +22,37 @@ export interface Column {
  */
 export type Row = readonly string[]
 
+type CodePointRange = readonly [number, number]
+
+const CJK_RANGES: readonly CodePointRange[] = [
+  [0x4e00, 0x9fff],
+  [0x3400, 0x4dbf],
+  [0xf900, 0xfaff],
+  [0x20000, 0x2a6df],
+  [0x2a700, 0x2b73f],
+  [0x2b740, 0x2b81f],
+  [0x2b820, 0x2ceaf],
+  [0x2ceb0, 0x2ebef],
+  [0x2f800, 0x2fa1f],
+]
+
+const EMOJI_RANGES: readonly CodePointRange[] = [
+  [0x1f600, 0x1f64f],
+  [0x1f300, 0x1f5ff],
+  [0x1f680, 0x1f6ff],
+  [0x1f1e0, 0x1f1ff],
+  [0x2600, 0x26ff],
+  [0x2700, 0x27bf],
+  [0x1f900, 0x1f9ff],
+  [0x1fa00, 0x1fa6f],
+  [0x1fa70, 0x1faff],
+]
+
+/** Return whether a code point is inside any configured range. */
+function isInRanges(cp: number, ranges: readonly CodePointRange[]): boolean {
+  return ranges.some(([start, end]) => cp >= start && cp <= end)
+}
+
 /**
  * Checks whether a Unicode code point is a CJK character that occupies
  * 2 cells in a monospace terminal.
@@ -30,25 +61,7 @@ export type Row = readonly string[]
  * @returns `true` if the character is CJK (wide).
  */
 function isCjk(cp: number): boolean {
-  // CJK Unified Ideographs
-  if (cp >= 0x4e00 && cp <= 0x9fff) return true
-  // CJK Unified Ideographs Extension A
-  if (cp >= 0x3400 && cp <= 0x4dbf) return true
-  // CJK Compatibility Ideographs
-  if (cp >= 0xf900 && cp <= 0xfaff) return true
-  // CJK Unified Ideographs Extension B (supplementary)
-  if (cp >= 0x20000 && cp <= 0x2a6df) return true
-  // CJK Unified Ideographs Extension C
-  if (cp >= 0x2a700 && cp <= 0x2b73f) return true
-  // CJK Unified Ideographs Extension D
-  if (cp >= 0x2b740 && cp <= 0x2b81f) return true
-  // CJK Unified Ideographs Extension E
-  if (cp >= 0x2b820 && cp <= 0x2ceaf) return true
-  // CJK Unified Ideographs Extension F
-  if (cp >= 0x2ceb0 && cp <= 0x2ebef) return true
-  // CJK Compatibility Ideographs Supplement
-  if (cp >= 0x2f800 && cp <= 0x2fa1f) return true
-  return false
+  return isInRanges(cp, CJK_RANGES)
 }
 
 /**
@@ -59,25 +72,7 @@ function isCjk(cp: number): boolean {
  * @returns `true` if the character is an emoji (wide).
  */
 function isEmoji(cp: number): boolean {
-  // Emoticons
-  if (cp >= 0x1f600 && cp <= 0x1f64f) return true
-  // Misc Symbols and Pictographs
-  if (cp >= 0x1f300 && cp <= 0x1f5ff) return true
-  // Transport and Map Symbols
-  if (cp >= 0x1f680 && cp <= 0x1f6ff) return true
-  // Flags
-  if (cp >= 0x1f1e0 && cp <= 0x1f1ff) return true
-  // Misc Symbols
-  if (cp >= 0x2600 && cp <= 0x26ff) return true
-  // Dingbats
-  if (cp >= 0x2700 && cp <= 0x27bf) return true
-  // Supplemental Symbols and Pictographs
-  if (cp >= 0x1f900 && cp <= 0x1f9ff) return true
-  // Symbols and Pictographs Extended-A
-  if (cp >= 0x1fa00 && cp <= 0x1fa6f) return true
-  // Symbols and Pictographs Extended-B
-  if (cp >= 0x1fa70 && cp <= 0x1faff) return true
-  return false
+  return isInRanges(cp, EMOJI_RANGES)
 }
 
 /**

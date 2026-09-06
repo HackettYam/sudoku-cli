@@ -1,8 +1,9 @@
+import { isValidPuzzle } from '@hackettyam/sudoku-tools'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+
+import type { CommandContext } from '../../commands/contract.js'
 import { newCommand, newContract } from '../../commands/new.js'
 import type * as NewModule from '../../commands/new.js'
-import type { CommandContext } from '../../commands/contract.js'
-import { isValidPuzzle } from '@hackettyam/sudoku-tools'
 
 // vi.mock is hoisted above the imports by vitest. We keep every named export
 // intact except for two precise re-bindings:
@@ -23,7 +24,7 @@ import { isValidPuzzle } from '@hackettyam/sudoku-tools'
 // the `vi.mock` factory pattern here. The hoisted factory runs at module
 // resolution time, before the test file body executes.
 vi.mock('../../commands/new.js', async (importOriginal) => {
-  const mod = (await importOriginal()) as typeof NewModule
+  const mod = await importOriginal<typeof NewModule>()
   const wrapped = vi.fn(mod.newCommand)
   return {
     ...mod,
@@ -110,7 +111,7 @@ describe('newCommand', () => {
       }
 
       expect(rows).toHaveLength(9)
-      rows.forEach((r) => expect(r).toHaveLength(9))
+      rows.forEach((r) => { expect(r).toHaveLength(9) })
       // Note: the puzzle itself is not solved, so isValidPuzzle is not asserted here.
       void isValidPuzzle
     }
@@ -139,7 +140,10 @@ describe('newContract', () => {
     })
     it('returns error on unknown option', () => {
       const r = newContract.parse(['--frobnicate'])
-      expect(r).toEqual({ ok: false, message: expect.stringContaining('Unknown option') })
+      expect(r.ok).toBe(false)
+      if (r.ok === false) {
+        expect(r.message).toContain('Unknown option')
+      }
     })
   })
 
@@ -157,7 +161,7 @@ describe('newContract', () => {
         difficultyName: 'easy',
       })
 
-      const result = await newContract.run({ pretty: false } as never, {} as never)
+      const result = await newContract.run({ pretty: false }, {} as never)
       // `newContract.run` calls `newCommand({})` when no difficulty is provided.
       expect(newCommand).toHaveBeenCalledWith({})
       expect(result).toEqual({
@@ -175,7 +179,7 @@ describe('newContract', () => {
       })
 
       const result = await newContract.run(
-        { difficulty: 'hard', pretty: false } as never,
+        { difficulty: 'hard', pretty: false },
         {} as never,
       )
       expect(newCommand).toHaveBeenCalledWith({ difficulty: 'hard' })

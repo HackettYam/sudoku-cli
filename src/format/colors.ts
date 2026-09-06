@@ -31,5 +31,5 @@ export function shouldEnableColors(
  * Use this for all color output in the TUI.
  */
 export const colors = pc.createColors(
-  shouldEnableColors(process.env, process.stdout.isTTY ?? false),
+  shouldEnableColors(process.env, process.stdout.isTTY ? true : false),
 )

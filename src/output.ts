@@ -40,7 +40,7 @@ export function stderr(text: string): void {
  * @param code - Process exit code (0 for success, non-zero for failure).
  */
 export function exit(code: number): never {
-  return process.exit(code) as never
+  return process.exit(code)
 }
 
 // ---------------------------------------------------------------------------

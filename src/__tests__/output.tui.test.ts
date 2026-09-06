@@ -1,15 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+
 import { runTuiSession } from '../output.js'
 
-describe('runTuiSession', () => {
-  beforeEach(() => {
-    // Setup runs before each test
-  })
+beforeEach(() => {
+  // Setup runs before each test
+})
 
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
+describe('runTuiSession setup', () => {
   it('cleanup is idempotent', () => {
     const stdinMock = {
       isTTY: true,
@@ -96,7 +97,7 @@ describe('runTuiSession', () => {
     const processRemoveListenerMock = vi.fn()
     const exitMock = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('exit')
-    }) as never)
+    }))
 
     Object.defineProperty(process, 'stdin', { value: stdinMock, writable: true })
     Object.defineProperty(process, 'stdout', { value: stdoutMock, writable: true })
@@ -110,7 +111,7 @@ describe('runTuiSession', () => {
     })
 
     // run() registers signal handlers
-    runner.run()
+    void runner.run()
 
     // Extract SIGINT handler
     const sigintCall = processOnMock.mock.calls.find((call) => call[0] === 'SIGINT')
@@ -124,6 +125,9 @@ describe('runTuiSession', () => {
     expect(exitMock).toHaveBeenCalledWith(130)
   })
 
+})
+
+describe('runTuiSession signals', () => {
   it('SIGTERM handler calls cleanup and exits', () => {
     const stdinMock = {
       isTTY: true,
@@ -140,7 +144,7 @@ describe('runTuiSession', () => {
     const processRemoveListenerMock = vi.fn()
     const exitMock = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('exit')
-    }) as never)
+    }))
 
     Object.defineProperty(process, 'stdin', { value: stdinMock, writable: true })
     Object.defineProperty(process, 'stdout', { value: stdoutMock, writable: true })
@@ -154,7 +158,7 @@ describe('runTuiSession', () => {
     })
 
     // run() registers signal handlers
-    runner.run()
+    void runner.run()
 
     // Extract SIGTERM handler
     const sigtermCall = processOnMock.mock.calls.find((call) => call[0] === 'SIGTERM')
@@ -197,7 +201,7 @@ describe('runTuiSession', () => {
       render: vi.fn(),
     })
 
-    runner.run()
+    void runner.run()
 
     // Should set raw mode
     expect(stdinMock.setRawMode).toHaveBeenCalledWith(true)
@@ -214,6 +218,9 @@ describe('runTuiSession', () => {
     runner.cleanup()
   })
 
+})
+
+describe('runTuiSession input', () => {
   it('onKey callback receives raw key buffer', () => {
     const stdinMock = {
       isTTY: true,
@@ -242,7 +249,7 @@ describe('runTuiSession', () => {
       render: vi.fn(),
     })
 
-    runner.run()
+    void runner.run()
 
     // Extract the data handler
     const dataCall = stdinMock.on.mock.calls.find((call) => call[0] === 'data')
@@ -257,7 +264,9 @@ describe('runTuiSession', () => {
 
     runner.cleanup()
   })
+})
 
+describe('runTuiSession cleanup', () => {
   it('exit event handler calls cleanup without exiting', () => {
     const stdinMock = {
       isTTY: true,
@@ -284,7 +293,7 @@ describe('runTuiSession', () => {
       render: vi.fn(),
     })
 
-    runner.run()
+    void runner.run()
 
     // Extract the exit handler (lines 151-153 in output.ts)
     const exitCall = processOnMock.mock.calls.find((call) => call[0] === 'exit')
@@ -325,7 +334,7 @@ describe('runTuiSession', () => {
       render: vi.fn(),
     })
 
-    runner.run()
+    void runner.run()
     runner.cleanup()
 
     // Should restore original raw mode (false)

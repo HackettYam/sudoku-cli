@@ -1,9 +1,11 @@
 import { parseArgs as parseUtilArgs } from 'node:util'
+
 import { isValidPuzzle } from '@hackettyam/sudoku-tools'
-import { parseBoard } from '../format/board-string.js'
+
 import { errorMessage } from './_error-message.js'
 import type { CommandContract, CommandContext, ParseResult } from './contract.js'
 import type { CommandResult } from './result.js'
+import { parseBoard } from '../format/board-string.js'
 
 /**
  * Validates a user-supplied Sudoku board against Sudoku rules.

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import { stdout, stderr, exit } from '../output.js'
 
 describe('output', () => {

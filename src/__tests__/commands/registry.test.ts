@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { commands, commandsByName } from '../../commands/index.js'
+
 import { HELP_TEXT, HELP_TEXT_BY_NAME, renderTopHelp, renderCommandHelp } from '../../args.js'
+import { commands, commandsByName } from '../../commands/index.js'
 import { newContract } from '../../commands/new.js'
 import { playContract } from '../../commands/play-contract.js'
 

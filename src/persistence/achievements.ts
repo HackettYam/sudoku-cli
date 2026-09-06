@@ -1,4 +1,4 @@
-import type { DifficultyType } from '@hackettyam/sudoku-tools'
+import { Difficulty, type DifficultyType } from '@hackettyam/sudoku-tools'
 
 /** Achievement identifier — string-literal union of all 11 achievement IDs. */
 export type AchievementId =
@@ -44,56 +44,56 @@ export const ACHIEVEMENTS: readonly AchievementDefinition[] = Object.freeze([
     id: 'first_win',
     title: 'First Win',
     description: 'Win your first game at novice difficulty',
-    evaluate: (ctx) => ctx.difficulty === 'novice',
+    evaluate: (ctx) => ctx.difficulty === Difficulty.Novice,
   },
   {
     id: 'speed_demon',
     title: 'Speed Demon',
     description: 'Win an easy game in under 5 minutes',
-    evaluate: (ctx) => ctx.difficulty === 'easy' && ctx.elapsedMs < 300_000,
+    evaluate: (ctx) => ctx.difficulty === Difficulty.Easy && ctx.elapsedMs < 300_000,
   },
   {
     id: 'no_hints_easy',
     title: 'No Hints',
     description: 'Win an easy game without using hints',
-    evaluate: (ctx) => ctx.difficulty === 'easy' && ctx.hintCount === 0,
+    evaluate: (ctx) => ctx.difficulty === Difficulty.Easy && ctx.hintCount === 0,
   },
   {
     id: 'perfectionist',
     title: 'Perfectionist',
     description: 'Win a normal game with no errors and no undo',
     evaluate: (ctx) =>
-      ctx.difficulty === 'normal' && ctx.errors.length === 0 && ctx.undoCount === 0,
+      ctx.difficulty === Difficulty.Normal && ctx.errors.length === 0 && ctx.undoCount === 0,
   },
   {
     id: 'minimalist',
     title: 'Minimalist',
     description: 'Win a normal game with 45 or fewer moves',
-    evaluate: (ctx) => ctx.difficulty === 'normal' && ctx.moveCount <= 45,
+    evaluate: (ctx) => ctx.difficulty === Difficulty.Normal && ctx.moveCount <= 45,
   },
   {
     id: 'no_undo',
     title: 'No Undo',
     description: 'Win a hard game without using undo',
-    evaluate: (ctx) => ctx.difficulty === 'hard' && ctx.undoCount === 0,
+    evaluate: (ctx) => ctx.difficulty === Difficulty.Hard && ctx.undoCount === 0,
   },
   {
     id: 'speedrunner',
     title: 'Speedrunner',
     description: 'Win a hard game in under 10 minutes',
-    evaluate: (ctx) => ctx.difficulty === 'hard' && ctx.elapsedMs < 600_000,
+    evaluate: (ctx) => ctx.difficulty === Difficulty.Hard && ctx.elapsedMs < 600_000,
   },
   {
     id: 'flawless_victory',
     title: 'Flawless Victory',
     description: 'Win an expert game with no errors',
-    evaluate: (ctx) => ctx.difficulty === 'expert' && ctx.errors.length === 0,
+    evaluate: (ctx) => ctx.difficulty === Difficulty.Expert && ctx.errors.length === 0,
   },
   {
     id: 'untouchable',
     title: 'Untouchable',
     description: 'Win an expert game without hints',
-    evaluate: (ctx) => ctx.difficulty === 'expert' && ctx.hintCount === 0,
+    evaluate: (ctx) => ctx.difficulty === Difficulty.Expert && ctx.hintCount === 0,
   },
   {
     id: 'century',

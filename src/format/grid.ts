@@ -17,38 +17,50 @@ import type { BoardType } from '@hackettyam/sudoku-tools'
  *   // ...
  * ])
  */
-export function renderGrid(board: BoardType): string {
+function validateBoard(board: BoardType): void {
   if (board.length !== 9) {
-    throw new Error(`Board must have 9 rows; got ${board.length}.`)
+    throw new Error(`Board must have 9 rows; got ${String(board.length)}.`)
   }
 
   for (let r = 0; r < 9; r++) {
     const row = board[r]
 
     if (row === undefined || row.length !== 9) {
-      throw new Error(`Board row ${r} must have 9 cells.`)
+      throw new Error(`Board row ${String(r)} must have 9 cells.`)
     }
   }
+}
 
-  const cell = (v: number): string => (v === 0 ? '.' : String(v))
+/** Format one cell for the plain-text grid. */
+function formatCell(value: number | undefined): string {
+  return value === 0 ? '.' : String(value ?? 0)
+}
+
+/** Format one board row as three visually separated boxes. */
+function renderRow(row: readonly number[]): string {
+  const segments: string[] = []
+
+  for (let box = 0; box < 3; box++) {
+    const start = box * 3
+    segments.push([
+      formatCell(row[start]),
+      formatCell(row[start + 1]),
+      formatCell(row[start + 2]),
+    ].join(' '))
+  }
+
+  return segments.join(' | ')
+}
+
+/** Render a validated 9x9 board as a plain-text grid. */
+export function renderGrid(board: BoardType): string {
+  validateBoard(board)
+
   const lineSep = '------+-------+------'
   const lines: string[] = []
 
   for (let r = 0; r < 9; r++) {
-    const row = board[r] ?? Array.from({ length: 9 }, () => 0)
-    const segments: string[] = []
-
-    for (let box = 0; box < 3; box++) {
-      const c0 = box * 3
-      const c1 = c0 + 1
-      const c2 = c0 + 2
-      const v0 = row[c0] ?? 0
-      const v1 = row[c1] ?? 0
-      const v2 = row[c2] ?? 0
-      segments.push(`${cell(v0)} ${cell(v1)} ${cell(v2)}`)
-    }
-
-    lines.push(segments.join(' | '))
+    lines.push(renderRow(board[r] ?? []))
 
     if (r === 2 || r === 5) {
       lines.push(lineSep)

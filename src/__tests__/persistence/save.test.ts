@@ -1,13 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+
+import { Difficulty } from '@hackettyam/sudoku-tools'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+
+import { createGame } from '../../game/state.js'
 import { saveGame, loadGame, listSaves, validateSaveId, latestSaveId } from '../../persistence/save.js'
 import { nodeFsAdapter, memoryFsAdapter } from '../../persistence/state.js'
-import type { StateFile } from '../../persistence/state.js'
-import { createGame } from '../../game/state.js'
-import { Difficulty } from '@hackettyam/sudoku-tools'
+import type { FsAdapter, StateFile } from '../../persistence/state.js'
+
 
 
 // ---------------------------------------------------------------------------
@@ -222,15 +225,15 @@ describe('loadGame', () => {
     const fakeId = '550e8400-e29b-41d4-a716-446655440000'
 
     // Custom adapter: exists returns true, but readFile throws ENOENT
-    const readErrorFs = {
-      readFile: async () => {
-        throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' })
-      },
-      writeFile: async () => {},
-      mkdir: async () => {},
-      rename: async () => {},
-      readdir: async () => [] as readonly string[],
-      exists: async () => true,
+    const readErrorFs: FsAdapter = {
+      readFile: () => Promise.reject(
+        Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }),
+      ),
+      writeFile: () => Promise.resolve(),
+      mkdir: () => Promise.resolve(),
+      rename: () => Promise.resolve(),
+      readdir: () => Promise.resolve([] as readonly string[]),
+      exists: () => Promise.resolve(true),
     }
 
     await expect(loadGame(readErrorFs, fakeId, tmpDir)).rejects.toThrow('corrupt')

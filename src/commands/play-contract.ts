@@ -1,10 +1,11 @@
 import { parseArgs as parseUtilArgs } from 'node:util'
+
 import { errorMessage } from './_error-message.js'
-import { playCommand } from './play.js'
-import { playStatsCommand } from './play-stats.js'
+import type { CommandContract, ParseResult } from './contract.js'
 import { playAchievementsCommand } from './play-achievements.js'
 import { playLeaderboardCommand } from './play-leaderboard.js'
-import type { CommandContract, ParseResult } from './contract.js'
+import { playStatsCommand } from './play-stats.js'
+import { playCommand } from './play.js'
 import type { CommandResult } from './result.js'
 
 /**
@@ -19,6 +20,72 @@ type PlayContractArgs = {
   readonly load?: string
   readonly resumeLast?: boolean
   readonly help?: boolean
+}
+
+type PlayValues = Record<string, string | boolean | (string | boolean)[] | undefined>
+
+/** Select the play sub-mode represented by parsed flags. */
+function getPlayKind(values: PlayValues): PlayContractArgs['kind'] {
+  if (values.stats === true) {
+    return 'play_stats'
+  }
+  if (values.achievements === true) {
+    return 'play_achievements'
+  }
+  if (values.leaderboard === true) {
+    return 'play_leaderboard'
+  }
+  return 'play_tui'
+}
+
+/** Build the typed play arguments without retaining absent optional flags. */
+function buildPlayArgs(values: PlayValues): PlayContractArgs {
+  const args: {
+    kind: PlayContractArgs['kind']
+    resumeLast: boolean
+    help: boolean
+    difficulty?: string
+    load?: string
+  } = {
+    kind: getPlayKind(values),
+    resumeLast: values.resume === true,
+    help: values.help === true,
+  }
+
+  if (typeof values.difficulty === 'string') {
+    args.difficulty = values.difficulty
+  }
+  if (typeof values.load === 'string') {
+    args.load = values.load
+  }
+
+  return args
+}
+
+/** Parse play flags and convert them to the command's typed argument shape. */
+function parsePlayOptions(rest: readonly string[]): ParseResult<PlayContractArgs> {
+  let parsed: ReturnType<typeof parseUtilArgs>
+
+  try {
+    parsed = parseUtilArgs({
+      args: [...rest],
+      options: {
+        difficulty:   { type: 'string' },
+        load:         { type: 'string' },
+        resume:       { type: 'boolean' },
+        stats:        { type: 'boolean' },
+        achievements: { type: 'boolean' },
+        leaderboard:  { type: 'boolean' },
+        help:         { type: 'boolean', short: 'h' },
+      },
+      allowPositionals: true,
+      strict: true,
+    })
+  } catch (cause) {
+    return { ok: false, message: errorMessage(cause) }
+  }
+
+  return { ok: true, args: buildPlayArgs(parsed.values) }
 }
 
 /**
@@ -46,51 +113,7 @@ export const playContract: CommandContract<PlayContractArgs> = {
     if (rest.includes('--help') || rest.includes('-h')) {
       return { ok: 'help' }
     }
-
-    let parsed: ReturnType<typeof parseUtilArgs>
-
-    try {
-      parsed = parseUtilArgs({
-        args: [...rest],
-        options: {
-          difficulty:   { type: 'string' },
-          load:         { type: 'string' },
-          resume:       { type: 'boolean' },
-          stats:        { type: 'boolean' },
-          achievements: { type: 'boolean' },
-          leaderboard:  { type: 'boolean' },
-          help:         { type: 'boolean', short: 'h' },
-        },
-        allowPositionals: true,
-        strict: true,
-      })
-    } catch (cause) {
-      return { ok: false, message: errorMessage(cause) }
-    }
-
-    let kind: PlayContractArgs['kind'] = 'play_tui'
-
-    if (parsed.values.stats === true) {
-      kind = 'play_stats'
-    } else if (parsed.values.achievements === true) {
-      kind = 'play_achievements'
-    } else if (parsed.values.leaderboard === true) {
-      kind = 'play_leaderboard'
-    }
-
-    const difficulty = typeof parsed.values.difficulty === 'string' ? parsed.values.difficulty : undefined
-    const load = typeof parsed.values.load === 'string' ? parsed.values.load : undefined
-
-    return {
-      ok: true,
-      args: {
-        kind,
-        ...(difficulty !== undefined ? { difficulty } : {}),
-        ...(load !== undefined ? { load } : {}),
-        resumeLast: parsed.values.resume === true,
-        help: parsed.values.help === true,
-      },
-    }
+    return parsePlayOptions(rest)
   },
   async run(args, ctx): Promise<CommandResult> {
     switch (args.kind) {

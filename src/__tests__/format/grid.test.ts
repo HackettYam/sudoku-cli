@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { renderGrid } from '../../format/grid.js'
 
 describe('renderGrid', () => {
@@ -35,7 +36,7 @@ describe('renderGrid', () => {
   })
 
   it('renders empty cells (0) as dots', () => {
-    const PARTIAL: typeof SOLVED = SOLVED.map((row) => row.slice()) as typeof SOLVED
+    const PARTIAL: typeof SOLVED = SOLVED.map((row) => row.slice())
     PARTIAL[0] = [0, 0, 0, 0, 0, 0, 0, 0, 0]
 
     const output = renderGrid(PARTIAL)
@@ -48,7 +49,7 @@ describe('renderGrid', () => {
   })
 
   it('throws when a row does not have 9 cells', () => {
-    const BAD = SOLVED.map((row) => row.slice()) as typeof SOLVED
+    const BAD = SOLVED.map((row) => row.slice())
     BAD[0] = [1, 2, 3] as never
 
     expect(() => renderGrid(BAD)).toThrowError(/Board row 0 must have 9 cells/)
@@ -58,7 +59,10 @@ describe('renderGrid', () => {
     // Construct a length-9 array whose slots are all `undefined`.
     // `board.length === 9` passes the outer check, then `board[r] === undefined`
     // triggers the per-row guard.
-    const SPARSE: typeof SOLVED = new Array(9) as unknown as typeof SOLVED
+    const SPARSE: typeof SOLVED = Array.from(
+      { length: 9 },
+      (): number[] => undefined as unknown as number[],
+    )
 
     expect(() => renderGrid(SPARSE)).toThrowError(/Board row 0 must have 9 cells/)
   })

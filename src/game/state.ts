@@ -1,16 +1,16 @@
+import type {
+  BoardReadOnlyType,
+  BoardType,
+  DifficultyType,
+} from '@hackettyam/sudoku-tools'
+
 import {
   clearCell,
   cloneBoard,
   createSudoku,
   isSolved,
   setCellValue,
-} from '@hackettyam/sudoku-tools'
-import type {
-  BoardReadOnlyType,
-  BoardType,
-  CellValue,
-  DifficultyType,
-} from '@hackettyam/sudoku-tools'
+} from '../sudoku-tools.js'
 
 /** Immutable cell position on the board. */
 export interface CellPosition {
@@ -104,7 +104,7 @@ export function createGame(difficulty: DifficultyType): GameState {
 export function applyMove(state: GameState, move: Move): GameState {
   switch (move.kind) {
     case 'place':
-      return applyPlace(state, move.row, move.col, move.value)
+      return applyPlace(state, move)
     case 'clear':
       return applyClear(state, move.row, move.col)
     case 'move-cursor':
@@ -222,20 +222,12 @@ function isReadOnlyCell(state: GameState, row: number, col: number): boolean {
 }
 
 /** Apply a `place` move. No-op if the cell is read-only. */
-function applyPlace(
-  state: GameState,
-  row: number,
-  col: number,
-  value: number,
-): GameState {
+function applyPlace(state: GameState, move: Extract<Move, { readonly kind: 'place' }>): GameState {
+  const { row, col, value } = move
   if (isReadOnlyCell(state, row, col)) {
     return state
   }
-  const newBoard = setCellValue(state.board, {
-    row,
-    col,
-    value: value as CellValue,
-  })
+  const newBoard = setCellValue(state.board, { row, col, value })
   const won = isSolved(newBoard, state.solution)
   const placedWrong = value !== state.solution[row]?.[col]
   return {
@@ -285,30 +277,13 @@ function applyHint(state: GameState): GameState {
   }
 
   // Find all empty editable cells
-  const candidates: { row: number; col: number }[] = []
-  for (let r = 0; r < 9; r++) {
-    for (let c = 0; c < 9; c++) {
-      if (!isReadOnlyCell(state, r, c) && state.board[r]?.[c] === 0) {
-        candidates.push({ row: r, col: c })
-      }
-    }
-  }
-
+  const candidates = findHintCandidates(state)
   if (candidates.length === 0) return state
 
-  // Pick a random candidate
   const idx = Math.floor(Math.random() * candidates.length)
   const candidate = candidates[idx]
   if (candidate === undefined) return state
-  const { row, col } = candidate
-  const value = state.solution[row]?.[col]
-  if (value === undefined || value === 0) return state
-
-  const newBoard = setCellValue(state.board, {
-    row,
-    col,
-    value: value as CellValue,
-  })
+  const newBoard = setCellValue(state.board, candidate)
   const won = isSolved(newBoard, state.solution)
 
   return {
@@ -321,6 +296,30 @@ function applyHint(state: GameState): GameState {
     status: won ? 'won' : state.status,
     ...(won ? { frozenTime: Date.now() } : {}),
   }
+}
+
+interface HintCandidate {
+  readonly row: number
+  readonly col: number
+  readonly value: number
+}
+
+function findHintCandidates(state: GameState): HintCandidate[] {
+  const candidates: HintCandidate[] = []
+  for (let row = 0; row < 9; row++) {
+    for (let col = 0; col < 9; col++) {
+      if (!isEditableEmptyCell(state, row, col)) continue
+      const value = state.solution[row]?.[col]
+      if (value !== undefined && value !== 0) {
+        candidates.push({ row, col, value })
+      }
+    }
+  }
+  return candidates
+}
+
+function isEditableEmptyCell(state: GameState, row: number, col: number): boolean {
+  return !isReadOnlyCell(state, row, col) && state.board[row]?.[col] === 0
 }
 
 /** Apply a `new-game` move. Only allowed when status is not `'playing'`. */

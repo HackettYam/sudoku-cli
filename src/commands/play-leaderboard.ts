@@ -1,12 +1,17 @@
 import { Difficulty, type DifficultyType } from '@hackettyam/sudoku-tools'
-import { loadState } from '../persistence/state.js'
-import type { FsAdapter } from '../persistence/state.js'
-import { nodeLockFactory } from '../persistence/lock.js'
-import type { LockFactory } from '../persistence/lock.js'
-import { defaultStatePath, defaultStateLockPath, nodeFsAdapter } from '../persistence/state.js'
+
 import { difficultyToName } from '../format/difficulty.js'
-import { formatTable } from '../format/table.js'
-import type { Column, Row } from '../format/table.js'
+import { formatTable, type Column, type Row } from '../format/table.js'
+import type { LockFactory } from '../persistence/lock.js'
+import { nodeLockFactory } from '../persistence/lock.js'
+import {
+  defaultStateLockPath,
+  defaultStatePath,
+  loadState,
+  nodeFsAdapter,
+  type FsAdapter,
+  type StateFile,
+} from '../persistence/state.js'
 import { formatTime } from '../tui.js'
 
 /** Result of the play-leaderboard command. */
@@ -20,6 +25,25 @@ export interface PlayLeaderboardDeps {
   readonly fs?: FsAdapter
   readonly lock?: LockFactory
   readonly statePath?: string
+}
+
+/** Build leaderboard rows in the canonical difficulty order. */
+function formatLeaderboardRows(state: StateFile): Row[] {
+  const difficulties: readonly DifficultyType[] = [
+    Difficulty.Novice, Difficulty.Easy, Difficulty.Normal, Difficulty.Hard, Difficulty.Expert,
+  ]
+  const rows: Row[] = []
+
+  for (const diff of difficulties) {
+    const stats = state.stats[diff]
+
+    const name = difficultyToName(diff)
+    const bestTime = stats.bestTimeMs !== null ? formatTime(stats.bestTimeMs) : '--:--'
+    const fewest = stats.fewestMoves !== null ? String(stats.fewestMoves) : '--'
+    rows.push([name, bestTime, fewest])
+  }
+
+  return rows
 }
 
 /**
@@ -42,10 +66,7 @@ export async function playLeaderboardCommand(
   const statePath = deps?.statePath ?? defaultStatePath()
 
   const state = await loadState(fs, statePath, lock)
-  const lines: string[] = []
-
-  lines.push('Leaderboard')
-  lines.push('')
+  const lines: string[] = ['Leaderboard', '']
 
   const columns: readonly Column[] = [
     { header: 'Difficulty', width: 10 },
@@ -53,28 +74,8 @@ export async function playLeaderboardCommand(
     { header: 'Fewest Moves', width: 14, align: 'right' },
   ]
 
-  const difficulties: readonly DifficultyType[] = [
-    Difficulty.Novice, Difficulty.Easy, Difficulty.Normal, Difficulty.Hard, Difficulty.Expert,
-  ]
-
-  const rows: Row[] = []
-
-  for (const diff of difficulties) {
-    const stats = state.stats[diff]
-    if (stats === undefined) continue
-
-    const name = difficultyToName(diff)
-    const bestTime = stats.bestTimeMs !== null ? formatTime(stats.bestTimeMs) : '--:--'
-    const fewest = stats.fewestMoves !== null ? String(stats.fewestMoves) : '--'
-
-    rows.push([name, bestTime, fewest])
-  }
-
-  const table = formatTable(columns, rows)
-
-  for (const line of table.split('\n')) {
-    lines.push(`  ${line}`)
-  }
+  const table = formatTable(columns, formatLeaderboardRows(state))
+  lines.push(...table.split('\n').map((line) => `  ${line}`))
 
   return { kind: 'play_leaderboard', lines }
 }

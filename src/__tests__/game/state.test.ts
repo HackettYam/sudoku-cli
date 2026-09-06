@@ -1,6 +1,32 @@
-import { describe, it, expect } from 'vitest'
-import { createGame, applyMove, isWon, undo, isReadOnly, getStats, type GameState } from '../../game/state.js'
 import { Difficulty } from '@hackettyam/sudoku-tools'
+import { describe, it, expect } from 'vitest'
+
+import { createGame, applyMove, isWon, undo, isReadOnly, getStats, type GameState } from '../../game/state.js'
+
+function fillEditableCells(state: GameState): GameState['board'] {
+  const board = state.board.map((row) => [...row])
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      if (state.readOnly[r]?.[c]) continue
+      const boardRow = board[r]
+      const solutionRow = state.solution[r]
+      const value = solutionRow?.[c]
+      if (boardRow !== undefined && value !== undefined) {
+        boardRow[c] = value
+      }
+    }
+  }
+  return board
+}
+
+function findReadOnlyCell(state: GameState): { row: number; col: number } {
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      if (state.readOnly[r]?.[c]) return { row: r, col: c }
+    }
+  }
+  throw new Error('Expected generated puzzle to contain a read-only cell')
+}
 
 describe('createGame', () => {
   it('returns correct initial shape', () => {
@@ -223,32 +249,12 @@ describe('applyMove - hint', () => {
     const state = createGame(Difficulty.Easy)
     // Fill all editable cells with solution values, then clear ONE read-only cell
     // so getHint must return that cell, which isReadOnlyCell blocks.
-    const syntheticBoard = state.board.map((r) => [...r])
-    for (let r = 0; r < 9; r++) {
-      for (let c = 0; c < 9; c++) {
-        if (!state.readOnly[r]?.[c]) {
-          ;(syntheticBoard[r] as (number | null)[])[c] =
-            ((state.solution as (number | null)[][])[r] as (number | null)[])[c] as number
-        }
-      }
-    }
-    let targetRow = -1
-    let targetCol = -1
-    for (let r = 0; r < 9; r++) {
-      for (let c = 0; c < 9; c++) {
-        if (state.readOnly[r]?.[c]) {
-          targetRow = r
-          targetCol = c
-          break
-        }
-      }
-      if (targetRow !== -1) break
-    }
+    const syntheticBoard = fillEditableCells(state)
+    const { row: targetRow, col: targetCol } = findReadOnlyCell(state)
     // Clear the read-only cell — it's now the only empty cell on the board
-    const boardRow = (syntheticBoard as (number | null)[][])[targetRow]
-    if (boardRow !== undefined) {
-      boardRow[targetCol] = 0
-    }
+    const boardRow = syntheticBoard[targetRow]
+    if (boardRow === undefined) throw new Error('Expected target row to exist')
+    boardRow[targetCol] = 0
     const syntheticState = { ...state, board: syntheticBoard }
     const next = applyMove(syntheticState, { kind: 'hint' })
     // isReadOnlyCell returns true → no-op (same reference)

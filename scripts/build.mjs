@@ -32,9 +32,7 @@ function resolveLibPath(absolutePath) {
   }
 }
 
-await build({
-  entryPoints: [join(root, 'src', 'cli.ts')],
-  outfile: join(root, 'dist', 'cli.js'),
+const bundleOptions = {
   bundle: true,
   platform: 'node',
   target: 'node18.3',
@@ -66,6 +64,18 @@ await build({
       },
     },
   ],
+}
+
+await build({
+  ...bundleOptions,
+  entryPoints: [join(root, 'src', 'cli.ts')],
+  outfile: join(root, 'dist', 'cli.js'),
+})
+
+await build({
+  ...bundleOptions,
+  entryPoints: [join(root, 'src', 'index.ts')],
+  outfile: join(root, 'dist', 'index.js'),
 })
 
 const outPath = join(root, 'dist', 'cli.js')

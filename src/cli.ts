@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { deserializeBoard } from '@hackettyam/sudoku-tools'
+import { fileURLToPath } from 'node:url'
+
 import { parseArgs, HELP_TEXT } from './args.js'
+import type { CommandContext } from './commands/contract.js'
 import { commandsByName } from './commands/index.js'
 import { defaultPlayIO, defaultPlayPersistence } from './commands/play.js'
+import type { CommandResult, ExitCodeValue } from './commands/result.js'
+import { parseBoard } from './format/board-string.js'
 import { renderGrid } from './format/grid.js'
 import { stdout, stderr, exit } from './output.js'
-import type { CommandContext } from './commands/contract.js'
-import type { CommandResult, ExitCodeValue } from './commands/result.js'
 
 /** Reads the package version from `package.json` next to this file. */
 function readVersion(): string {
@@ -43,17 +44,44 @@ function extractPretty(args: unknown): { pretty: boolean; rest: unknown } {
   return { pretty: false, rest: args }
 }
 
-/** Routes a {@link CommandResult} to stdout/stderr and the right exit code. */
-function handleResult(result: CommandResult, pretty: boolean): ExitCodeValue {
+type NewResult = Extract<CommandResult, { kind: 'new' }>
+type PlayExitResult = Extract<CommandResult, { kind: 'play_exit' }>
+type LinesResult = Extract<CommandResult, { lines: readonly string[] }>
+type SimpleResult = Exclude<CommandResult, NewResult | PlayExitResult | LinesResult>
+
+/** Route a generated puzzle to the requested output streams. */
+function handleNewResult(result: NewResult, pretty: boolean): ExitCodeValue {
+  stdout(result.serialized)
+  if (!pretty) {
+    return 0
+  }
+
+  stderr('')
+  stderr(`Difficulty: ${result.difficultyName}`)
+  stderr(renderGrid(parseBoard(result.serialized)))
+  return 0
+}
+
+/** Route the interactive command's exit result. */
+function handlePlayExit(result: PlayExitResult): ExitCodeValue {
+  if (result.reason === 'error') {
+    stderr(result.message ?? 'Unknown error')
+    return 2
+  }
+  return 0
+}
+
+/** Route line-oriented play subcommand output. */
+function handleLinesResult(result: LinesResult): ExitCodeValue {
+  for (const line of result.lines) {
+    stdout(line)
+  }
+  return 0
+}
+
+/** Route the non-play command results. */
+function handleSimpleResult(result: SimpleResult): ExitCodeValue {
   switch (result.kind) {
-    case 'new':
-      stdout(result.serialized)
-      if (pretty) {
-        stderr('')
-        stderr(`Difficulty: ${result.difficultyName}`)
-        stderr(renderGrid(deserializeBoard(result.serialized)))
-      }
-      return 0
     case 'solved':
       stdout(result.serialized)
       return 0
@@ -70,25 +98,31 @@ function handleResult(result: CommandResult, pretty: boolean): ExitCodeValue {
       stderr(result.reason)
       return 2
     case 'hint':
-      stdout(`Hint: row=${result.row} col=${result.col} value=${result.value}`)
+      stdout(`Hint: row=${String(result.row)} col=${String(result.col)} value=${String(result.value)}`)
       return 0
     case 'no_hint':
       stderr('No hint available (puzzle is already complete).')
       return 1
-    case 'play_exit':
-      if (result.reason === 'error') {
-        stderr(result.message ?? 'Unknown error')
-        return 2
-      }
-      return 0
-    case 'play_stats':
-    case 'play_achievements':
-    case 'play_leaderboard':
-      for (const line of result.lines) {
-        stdout(line)
-      }
-      return 0
   }
+}
+
+/** Identify results that contain already-formatted output lines. */
+function hasOutputLines(result: CommandResult): result is LinesResult {
+  return 'lines' in result
+}
+
+/** Routes a {@link CommandResult} to stdout/stderr and the right exit code. */
+function handleResult(result: CommandResult, pretty: boolean): ExitCodeValue {
+  if (result.kind === 'new') {
+    return handleNewResult(result, pretty)
+  }
+  if (result.kind === 'play_exit') {
+    return handlePlayExit(result)
+  }
+  if (hasOutputLines(result)) {
+    return handleLinesResult(result)
+  }
+  return handleSimpleResult(result)
 }
 
 /**
@@ -156,7 +190,7 @@ if (entryFile !== undefined) {
 
     run(process.argv.slice(2)).then(
       (code) => exit(code),
-      (cause) => {
+      (cause: unknown) => {
         stderr(`Unexpected error: ${cause instanceof Error ? cause.message : String(cause)}`)
         exit(1)
       },

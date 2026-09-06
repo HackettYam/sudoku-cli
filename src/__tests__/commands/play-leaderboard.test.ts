@@ -1,9 +1,21 @@
-import { describe, it, expect } from 'vitest'
-import { playLeaderboardCommand } from '../../commands/play-leaderboard.js'
-import { memoryFsAdapter, saveState } from '../../persistence/state.js'
-import type { StateFile } from '../../persistence/state.js'
-import { inMemoryLockFactory } from '../../persistence/lock.js'
 import { Difficulty } from '@hackettyam/sudoku-tools'
+import { describe, it, expect } from 'vitest'
+
+import { playLeaderboardCommand } from '../../commands/play-leaderboard.js'
+import { inMemoryLockFactory } from '../../persistence/lock.js'
+import {
+  StateCorruptError,
+  loadState,
+  memoryFsAdapter,
+  saveState,
+} from '../../persistence/state.js'
+import type { StateFile } from '../../persistence/state.js'
+
+function expectOutputToContain(output: string, expected: readonly string[]): void {
+  for (const value of expected) {
+    expect(output).toContain(value)
+  }
+}
 
 describe('playLeaderboardCommand', () => {
   it('returns empty leaderboard with default state', async () => {
@@ -66,29 +78,19 @@ describe('playLeaderboardCommand', () => {
     const output = result.lines.join('\n')
 
     // Table should have difficulty names
-    expect(output).toContain('Difficulty')
-    expect(output).toContain('Best Time')
-    expect(output).toContain('Fewest Moves')
+    expectOutputToContain(output, ['Difficulty', 'Best Time', 'Fewest Moves'])
 
     // Novice: 65000ms = 1:05, 30 moves
-    expect(output).toContain('novice')
-    expect(output).toContain('1:05')
-    expect(output).toContain('30')
+    expectOutputToContain(output, ['novice', '1:05', '30'])
 
     // Easy: 120000ms = 2:00, 40 moves
-    expect(output).toContain('easy')
-    expect(output).toContain('2:00')
-    expect(output).toContain('40')
+    expectOutputToContain(output, ['easy', '2:00', '40'])
 
     // Normal: 300000ms = 5:00, 55 moves
-    expect(output).toContain('normal')
-    expect(output).toContain('5:00')
-    expect(output).toContain('55')
+    expectOutputToContain(output, ['normal', '5:00', '55'])
 
     // Hard: no best time, no fewest moves
-    expect(output).toContain('hard')
-    expect(output).toContain('--:--')
-    expect(output).toContain('--')
+    expectOutputToContain(output, ['hard', '--:--', '--'])
   })
 
   it('formats times correctly in the table', async () => {
@@ -120,6 +122,24 @@ describe('playLeaderboardCommand', () => {
 
     // 3661000ms = 1:01:01
     expect(output).toContain('1:01:01')
+  })
+
+  it('rejects a missing difficulty entry as corrupt', async () => {
+    const fs = memoryFsAdapter()
+    const lock = inMemoryLockFactory()
+    const statePath = '/test/state.json'
+    const state = await loadState(fs, statePath, lock)
+    const expertKey: string = Difficulty.Expert
+    const sparseStats = Object.fromEntries(
+      Object.entries(state.stats).filter(([difficulty]) => difficulty !== expertKey),
+    ) as StateFile['stats']
+    const sparseState: StateFile = { ...state, stats: sparseStats }
+
+    await saveState(fs, statePath, sparseState, lock)
+
+    await expect(
+      playLeaderboardCommand({ fs, lock, statePath }),
+    ).rejects.toBeInstanceOf(StateCorruptError)
   })
 
   it('works with default deps', async () => {

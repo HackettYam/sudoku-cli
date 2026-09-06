@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { normalizeBoardString, parseBoard } from '../../format/board-string.js'
 
 const VALID_BOARD = '123456789456789123789123456234567891567891234891234567345678912678912345912345678'

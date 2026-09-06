@@ -1,9 +1,10 @@
 import { parseArgs as parseUtilArgs } from 'node:util'
-import { createSudoku, serializeBoard } from '@hackettyam/sudoku-tools'
-import { parseDifficulty, difficultyToName } from '../format/difficulty.js'
+
 import { errorMessage } from './_error-message.js'
 import type { CommandContract, CommandContext, ParseResult } from './contract.js'
 import type { CommandResult } from './result.js'
+import { parseDifficulty, difficultyToName } from '../format/difficulty.js'
+import { createSudoku, serializeBoard } from '../sudoku-tools.js'
 
 /**
  * Options accepted by the `new` subcommand.
