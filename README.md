@@ -2,7 +2,7 @@
 
 > Command-line interface for Sudoku: generate, solve, validate, hint, and play puzzles interactively.
 
-A thin CLI on top of the [`@hackettyam/sudoku-tools`](https://www.npmjs.com/package/@hackettyam/sudoku-tools) library. Two runtime dependencies beyond that library — `picocolors` (terminal colors) and `proper-lockfile` (file locking for persistence). The CLI uses Node's built-in `util.parseArgs` for argument parsing.
+A thin CLI on top of the [`@hackettyam/sudoku-tools`](https://www.npmjs.com/package/@hackettyam/sudoku-tools) library. Runtime dependencies include `@hackettyam/sudoku-tools`, `picocolors` (terminal colors), and `proper-lockfile` (file locking for persistence). The CLI uses Node's built-in `util.parseArgs` for argument parsing.
 
 ## Install
 
@@ -111,7 +111,7 @@ Game state is persisted in `~/.sudoku-cli/`:
 | `state.json.lock` | Lock file (managed by `proper-lockfile`) |
 | `saves/` | Saved game positions (one file per save) |
 
-All files are created on first use and updated atomically.
+State updates via `updateState` and save writes are atomic, while initial missing-state creation is direct initialization.
 
 ### Save and resume
 

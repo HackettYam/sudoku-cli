@@ -10,8 +10,8 @@
 - TypeScript (strict, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`)
 - pnpm 10 (sole PM — global rule G-20)
 - ESM only (`"type": "module"`, `module/moduleResolution: NodeNext`)
-- Zero runtime dependencies beyond `@hackettyam/sudoku-tools`
-- Vitest 2 + ESLint 9 flat config + `@stylistic/eslint-plugin`
+- Runtime dependencies are `@hackettyam/sudoku-tools`, `picocolors`, and `proper-lockfile`.
+- Vitest 3.2.7 + strict ESLint 9 flat config with typed, import, and clean-code rules + `@stylistic/eslint-plugin`
 
 ## Commands (run in this order when verifying a change)
 
@@ -19,13 +19,13 @@
 pnpm install
 pnpm typecheck     # tsc --noEmit
 pnpm lint
-pnpm test          # 516 tests
-pnpm test:coverage # 100% lines/statements/functions required
-pnpm build         # tsc (types) + esbuild (bundled bin)
+pnpm test
+pnpm test:coverage # 100% lines/statements/functions; 96.6% branches (not enforced)
+pnpm build         # tsc types + esbuild bundles dist/cli.js and dist/index.js
 node dist/cli.js new --difficulty easy   # smoke test the published bin
 ```
 
-`pnpm build` runs `build:types` then `build:bundle`. The bin path is `dist/cli.js` (single self-contained file, see "Build" below).
+`pnpm build` runs `build:types` then `build:bundle`. The bundle emits the bundled `dist/cli.js` and `dist/index.js`; `dist/cli.js` is the bin (see "Build" below).
 
 ## Architecture
 
@@ -96,20 +96,21 @@ Tests use a similar workaround: `vitest.config.ts` registers the same `@/` → `
 
 ## Testing
 
-- Vitest 2 with `@vitest/coverage-v8`.
+- Vitest 3.2.7 with `@vitest/coverage-v8`.
 - All tests are under `src/__tests__/` mirroring the source tree (e.g. `src/__tests__/commands/`, `src/__tests__/persistence/`).
+- The suite contains 614 tests across 34 files.
 - **`src/cli.ts` and `src/index.ts` are excluded from coverage** (they are pure dispatch / re-export, hard to unit-test in isolation). The dispatch logic is exercised by the command tests.
-- **100% line / statement / function coverage is the gate** (G-T02). Branch coverage is reported but not enforced (v8 produces false-positive branch counts for ternaries and short-circuit operators that are not realistically reachable).
+- **Coverage:** 100% line / statement / function coverage is required (G-T02); branch coverage is 96.6% and is reported but not enforced. v8 produces false-positive branch counts for ternaries and short-circuit operators that are not realistically reachable.
 - Test fixtures: `123456789456789123789123456234567891567891234891234567345678912678912345912345678` is the library's `SUDOKU_BASE_BOARD` (a valid solved board). For "unsolvable" use `'550000000' + '0'.repeat(72)` (two 5s in row 0).
 
 ## Build & release
 
 - `pnpm build:types` → `tsc -p tsconfig.build.json` emits `dist/{index,args,cli,output}.{js,d.ts,*.map}` plus the `commands/` and `format/` subdirs. This is the **library surface** for programmatic consumers.
-- `pnpm build:bundle` → `node scripts/build.mjs` produces a single self-contained `dist/cli.js` (≈25 kB) with a shebang. This is the **bin** the `bin` field in `package.json` points at.
+- `pnpm build:bundle` → `node scripts/build.mjs` emits bundled `dist/cli.js` and `dist/index.js`; `dist/cli.js` has a shebang and is the **bin** the `bin` field in `package.json` points at.
 - `prepublishOnly: pnpm build` runs both.
 - Release bumps: `pnpm release:patch|minor|major` (uses `standard-version`, expects Conventional Commits).
 - The `pnpm-workspace.yaml` and the `pnpm.onlyBuiltDependencies` in `package.json` exist solely to let esbuild's postinstall run under pnpm 10's strict `ignored-builds` policy. Do not delete them.
 
 ## Inherited global rules
 
-TypeScript quality (G-01..G-22), testing (G-T01..G-T10), security (G-S01..G-S08), language (G-L01..G-L05), and temperature (G-TEMP-01..G-TEMP-08) rules are defined in `~/.config/opencode/AGENTS.md` and apply here unchanged. The only local override is the branch-coverage threshold (see "Testing"); line coverage still follows G-T02.
+TypeScript quality (G-01..G-22), testing (G-T01..G-T10), security (G-S01..G-S08), language (G-L01..G-L05), and temperature (G-TEMP-01..G-TEMP-08) rules are defined in `~/.config/opencode/AGENTS.md` and apply here unchanged. The only local testing override is that branch coverage is reported at 96.6% but not enforced; 100% line / statement / function coverage still follows G-T02.

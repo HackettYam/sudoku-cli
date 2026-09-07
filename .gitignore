@@ -37,6 +37,6 @@ pnpm-debug.log*
 
 # OpenCode
 .opencode/
-AGENTS.md
+# AGENTS.md
 opencode.json
 opencode.jsonc
