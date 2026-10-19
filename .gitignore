@@ -31,12 +31,19 @@ pnpm-debug.log*
 .env
 .env.local
 .env.*.local
+.trash/
 
 # Test artifacts
 .vitest-cache/
 
+# Agents
+# .agents/
+# AGENTS.md
+
 # OpenCode
 .opencode/
-# AGENTS.md
 opencode.json
 opencode.jsonc
+
+# CommandCode
+.commandcode/
